@@ -3,11 +3,13 @@
 import GuessRecap from "./GuessRecap";
 import Markdown from "./Markdown";
 import PredictionCard from "./PredictionCard";
+import QuizCard from "./QuizCard";
 import RevealCard from "./RevealCard";
 import Spinner from "./Spinner";
 import TeachPanel from "./TeachPanel";
 import type { LiveExchange } from "@/lib/client";
-import type { Confidence } from "@/lib/types";
+import { useState } from "react";
+import type { Confidence, QuizKind } from "@/lib/types";
 
 export default function ExchangeView({
   ex,
@@ -22,6 +24,9 @@ export default function ExchangeView({
   onAskMainChat,
   onClearTeaching,
   renderTeach,
+  quizKind,
+  onQuizAnswer,
+  onQuizDismiss,
 }: {
   ex: LiveExchange;
   busy: boolean;
@@ -36,7 +41,20 @@ export default function ExchangeView({
   onClearTeaching: () => void;
   /** False while this session is floated to the end of the thread instead. */
   renderTeach: boolean;
+  quizKind: QuizKind;
+  onQuizAnswer: (questionId: string, text: string) => void;
+  onQuizDismiss: () => void;
 }) {
+  const [peeked, setPeeked] = useState(false);
+
+  // Retrieval only works if the answer is not sitting there to be read off — but
+  // only once there is actually something to answer. Hiding it while the questions
+  // are still being written just leaves the user staring at a spinner, and hiding
+  // it after the last one is answered contradicts what the card says.
+  const quizzing = (ex.quiz.length > 0 || ex.quizPending) && !ex.quizDismissed;
+  const quizDone = ex.quiz.length > 0 && ex.quiz.every((q) => q.user_answer !== null);
+  const answerHidden = quizzing && ex.quiz.length > 0 && !quizDone && !peeked;
+
   const showTeach =
     renderTeach && (ex.teach.turns.length > 0 || ex.teach.pending || ex.status === "teaching");
 
@@ -98,7 +116,22 @@ export default function ExchangeView({
 
       {ex.revealStreaming && !ex.sections.gist && <Spinner label="writing the answer" />}
 
-      {(ex.sections.gist || ex.revealStreaming) && (
+      {answerHidden && (
+        <div className="flex flex-wrap items-center gap-3 rounded-lg border border-dashed border-stone-300 px-3.5 py-2.5">
+          <span className="text-[13.5px] text-stone-500">
+            Answer hidden while you recall it.
+          </span>
+          <button
+            type="button"
+            onClick={() => setPeeked(true)}
+            className="text-[13px] text-stone-400 underline underline-offset-2 transition hover:text-stone-700"
+          >
+            Show it anyway
+          </button>
+        </div>
+      )}
+
+      {!answerHidden && (ex.sections.gist || ex.revealStreaming) && (
         <RevealCard
           sections={ex.sections}
           streaming={ex.revealStreaming}
@@ -113,6 +146,16 @@ export default function ExchangeView({
             (ex.status === "revealed" || ex.status === "revealing")
           }
           onExplainBack={onExplainBack}
+        />
+      )}
+
+      {quizzing && (
+        <QuizCard
+          kind={quizKind}
+          questions={ex.quiz}
+          pending={ex.quizPending}
+          onAnswer={onQuizAnswer}
+          onDismiss={onQuizDismiss}
         />
       )}
 

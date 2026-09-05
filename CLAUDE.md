@@ -110,10 +110,44 @@ prediction cards, reveals, all of it — until a refresh reloaded from SQLite.
 Never pass a mutable variable into a state updater closure. `patch(key, …)`
 evaluates its argument eagerly, which is why everything routes through it.
 
+### 5. Preferences configure everything except the prediction
+
+`preferences` is a singleton row (§2: one local user). The setup screen gates the
+app on first run — `getPreferences()` returning `null` is the onboarding flag —
+and is reachable afterwards from the sidebar.
+
+Two settings, and the framing of them is deliberate. They ask **what the user
+wants the session to do**, not what kind of learner they are: matching teaching to
+a self-reported learning style is a well-replicated null result, and §10.5 already
+argues that passive measurement beats upfront self-report. Keep the copy on that
+side of the line.
+
+- `reinforcement` — `teach_back` | `quiz` | `transfer_probe`. Fires automatically
+  when a reveal completes. The manual `Explain it back` button stays regardless,
+  which is also the de-facto "none" option.
+- `density` — `prose` | `balanced` | `visual`. Injected as `<format-preference>`
+  into the reveal and plain-answer calls; the rules for each value live in
+  `prompts/reveal.md` and `prompts/answer.md` so they stay hand-editable (§5). On
+  an identical question this moves `full` from 0 markdown table rows at `prose` to
+  9 at `visual` — if a prompt edit collapses that gap, the setting has stopped
+  meaning anything.
+
+**The prediction is not a setting.** §4.2 says it does most of the work and §9's
+success metric depends on it; making it optional turns Learn mode into Answer mode
+with extra steps. The setup screen says so explicitly.
+
+`quiz` and `transfer_probe` share one implementation — a transfer probe is a
+one-question quiz on a different substrate. While a quiz is live the answer is
+hidden, because retrieval is the point and re-reading is what feels like learning
+without being it. Two edges that were bugs first: do **not** hide it while the
+questions are still generating (the user is left staring at a spinner), and do
+**not** keep hiding it once every question is answered (the card says the answer
+is back). `Show it anyway` is always there.
+
 ## Layout
 
 ```
-prompts/            answer, triage, predict, reveal, protege, concepts (+ fixtures/)
+prompts/            answer, triage, predict, reveal, protege, quiz, concepts (+ fixtures/)
 src/lib/phases.ts   every model call — the only file that talks to the SDK
 src/lib/xml-stream.ts   incremental parser for the layered contract
 src/lib/repo.ts     all SQL

@@ -38,6 +38,26 @@ const explainBack = page.getByRole("button", { name: /Explain it back/ });
 
 await page.goto(BASE, { waitUntil: "networkidle" });
 
+// The setup screen is now the first thing on a fresh install, and it gates the chat.
+if ((await page.getByText("Before we start").count()) > 0) {
+  check((await page.locator("textarea").count()) === 0, "setup screen gates the chat on first run");
+  check((await page.getByText("always commit a guess").count()) > 0,
+        "setup says the prediction is not configurable");
+  await page.getByRole("button", { name: /Make me explain it back/ }).click();
+  await page.getByRole("button", { name: /Balanced/ }).click();
+  await page.getByRole("button", { name: "Start", exact: true }).click();
+  await page.waitForTimeout(1000);
+  check((await page.locator("textarea").count()) > 0, "Start drops you into the chat");
+} else {
+  // Already onboarded — force the settings the rest of this suite assumes.
+  await page.getByRole("button", { name: "Preferences", exact: true }).click();
+  await page.waitForTimeout(400);
+  await page.getByRole("button", { name: /Make me explain it back/ }).click();
+  await page.getByRole("button", { name: /Balanced/ }).click();
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await page.waitForTimeout(800);
+}
+
 // Remember what was here first, so this run can clean up after itself.
 const preexisting = await page.evaluate(async () =>
   (await (await fetch("/api/threads")).json()).threads.map((t) => t.id),
@@ -130,8 +150,7 @@ check((await page.getByRole("button", { name: "answer", exact: true }).getAttrib
 check((await page.getByText("Switched back to Answer").count()) > 0, "the auto-flip announced itself");
 
 // ── Protégé mode ──────────────────────────────────────────────────────────
-log("protege");
-await explainBack.click();
+log("protege (auto-launched by the 'explain it back' preference)");
 await page.waitForFunction(
   () => (document.querySelector("main")?.innerText ?? "").includes("JUNIOR"),
   null, { timeout: 120000 },

@@ -51,7 +51,12 @@ export async function POST(req: Request) {
       });
     };
 
-    const stream = streamReveal(exchange.question, prediction, history);
+    const stream = streamReveal(
+      exchange.question,
+      prediction,
+      history,
+      repo.getPreferencesOrDefault().density,
+    );
     stream.on("text", (delta) => {
       forward(parser.push(delta));
       saveProgress();

@@ -68,6 +68,31 @@ CREATE TABLE IF NOT EXISTS teach_turns (
 );
 CREATE INDEX IF NOT EXISTS idx_teach_exchange ON teach_turns(exchange_id, idx);
 
+-- Single local user (§2), so this is a singleton row keyed 'singleton'.
+-- Deliberately about what the user wants the session to *do*, not about what
+-- kind of learner they are — self-reported learning styles do not predict
+-- outcomes, and §10.5 already argues against upfront self-report.
+CREATE TABLE IF NOT EXISTS preferences (
+  id            TEXT PRIMARY KEY,
+  reinforcement TEXT NOT NULL CHECK (reinforcement IN ('teach_back','quiz','transfer_probe')),
+  density       TEXT NOT NULL CHECK (density IN ('prose','balanced','visual')),
+  updated_at    INTEGER NOT NULL
+);
+
+-- Retrieval practice after a reveal. 'transfer' is the same machinery with one
+-- question on a different substrate; 'recall' is 2-3 questions from memory.
+CREATE TABLE IF NOT EXISTS quiz_questions (
+  id          TEXT PRIMARY KEY,
+  exchange_id TEXT NOT NULL REFERENCES exchanges(id) ON DELETE CASCADE,
+  idx         INTEGER NOT NULL,
+  kind        TEXT NOT NULL CHECK (kind IN ('recall','transfer')),
+  question    TEXT NOT NULL,
+  user_answer TEXT,
+  feedback    TEXT,
+  was_correct INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_quiz_exchange ON quiz_questions(exchange_id, idx);
+
 CREATE TABLE IF NOT EXISTS concepts (
   id    TEXT PRIMARY KEY,
   label TEXT NOT NULL,

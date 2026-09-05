@@ -2,6 +2,9 @@
 
 import type {
   Confidence,
+  Preferences,
+  QuizKind,
+  QuizQuestion,
   ExchangeRecord,
   Mode,
   PredictPrompt,
@@ -75,6 +78,14 @@ export const api = {
   endExchange: (exchangeId: string) => post<{ ok: true }>("/api/exchange", { action: "end", exchangeId }),
   clearTeaching: (exchangeId: string) =>
     post<{ ok: true }>("/api/exchange", { action: "clear_teaching", exchangeId }),
+
+  getPreferences: () => json<{ preferences: Preferences | null }>("/api/preferences"),
+  savePreferences: (p: Preferences) => post<{ preferences: Preferences }>("/api/preferences", p),
+
+  startQuiz: (exchangeId: string, kind: QuizKind) =>
+    post<{ questions: QuizQuestion[] }>("/api/quiz", { action: "start", exchangeId, kind }),
+  answerQuiz: (exchangeId: string, questionId: string, text: string) =>
+    post<{ questions: QuizQuestion[] }>("/api/quiz", { action: "answer", exchangeId, questionId, text }),
 };
 
 // ── client-side view of an exchange ─────────────────────────────────────────
@@ -116,6 +127,10 @@ export interface LiveExchange {
   hintPending: boolean;
   /** Which option was right, once the reveal has said so. */
   correctOption: string | null;
+  quiz: QuizQuestion[];
+  quizPending: boolean;
+  /** Dismissed or finished — stop hiding the answer behind it. */
+  quizDismissed: boolean;
   /** The layered answer is still being written. Independent of `status`, because
    *  you can start explaining back while `full` is still arriving. */
   revealStreaming: boolean;
@@ -151,6 +166,9 @@ export function blankExchange(key: string, question: string, mode: Mode): LiveEx
     hint: null,
     hintPending: false,
     correctOption: null,
+    quiz: [],
+    quizPending: false,
+    quizDismissed: false,
     revealStreaming: false,
     sections: {},
     teach: {
@@ -210,6 +228,9 @@ export function fromRecord(r: ExchangeRecord): LiveExchange {
     hint: null,
     hintPending: false,
     correctOption: r.prediction?.correct_option ?? null,
+    quiz: r.quiz,
+    quizPending: false,
+    quizDismissed: r.quiz.length > 0 && r.quiz.every((q) => q.user_answer !== null),
     revealStreaming: false,
     sections: {
       gist: r.answer?.gist ?? undefined,

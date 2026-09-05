@@ -47,7 +47,8 @@ export async function POST(req: Request) {
     const ac = new AbortController();
     req.signal.addEventListener("abort", () => ac.abort());
     const text = channel<string>();
-    const answer = streamPlainAnswer(question, history, context, ac.signal);
+    const { density } = repo.getPreferencesOrDefault();
+    const answer = streamPlainAnswer(question, history, context, density, ac.signal);
     answer.on("text", (delta) => text.push(delta));
     answer.finalMessage().then(
       () => text.close(),

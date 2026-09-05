@@ -16,6 +16,20 @@ npm run dev
 
 Open http://localhost:3000. SQLite is created at `./data/learn.db` on first use.
 
+## Setup
+
+On first run you pick two things — what should happen after the answer
+(explain it back / quiz / one transfer question), and how much of the answer
+should be tables and diagrams rather than paragraphs. Both are changeable later
+from **Preferences** in the sidebar.
+
+They're framed as *what do you want this to do*, not *what kind of learner are
+you* — matching teaching to a self-reported learning style doesn't hold up, but
+"quiz me at the end" is a real preference about whether you'll keep using the
+thing.
+
+Committing a guess isn't configurable. It's the part carrying the weight.
+
 ## The loop
 
 ```

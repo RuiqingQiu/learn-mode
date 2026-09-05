@@ -6,12 +6,22 @@ import { z } from "zod";
 import { FALLBACK, MODELS, anthropic } from "./anthropic";
 import { loadPrompt } from "./prompts";
 import * as repo from "./repo";
-import type { Confidence, PredictPrompt, PredictionRecord, TriageResult } from "./types";
+import type {
+  Confidence,
+  Density,
+  PredictPrompt,
+  PredictionRecord,
+  QuizKind,
+  TriageResult,
+} from "./types";
 
 type Msg = Anthropic.Beta.BetaMessageParam;
 
 const asMessages = (history: { role: "user" | "assistant"; content: string }[]): Msg[] =>
   history.map((h) => ({ role: h.role, content: h.content }));
+
+/** The one variable bit of the format rules in reveal.md / answer.md. */
+const formatBlock = (density: Density) => `<format-preference>${density}</format-preference>`;
 
 // ── TRIAGE (§4.1) ───────────────────────────────────────────────────────────
 
@@ -45,6 +55,7 @@ export function streamPlainAnswer(
   history: { role: "user" | "assistant"; content: string }[],
   /** e.g. an explain-back transcript, so the answer can target the actual gaps. */
   context?: string | null,
+  density: Density = "balanced",
   signal?: AbortSignal,
 ) {
   return anthropic().beta.messages.stream(
@@ -56,7 +67,10 @@ export function streamPlainAnswer(
       system: [{ type: "text", text: loadPrompt("answer"), cache_control: { type: "ephemeral" } }],
       messages: [
         ...asMessages(history),
-        { role: "user", content: context ? `${context}\n\n${question}` : question },
+        {
+          role: "user",
+          content: [formatBlock(density), context, question].filter(Boolean).join("\n\n"),
+        },
       ],
     },
     { signal },
@@ -150,6 +164,7 @@ export function streamReveal(
   question: string,
   prediction: PredictionRecord | null,
   history: { role: "user" | "assistant"; content: string }[],
+  density: Density = "balanced",
   signal?: AbortSignal,
 ) {
   // The option list has to go in, or the model cannot name which id was right
@@ -165,6 +180,7 @@ export function streamReveal(
     : "";
 
   const content = [
+    formatBlock(density),
     `<question>${question}</question>`,
     prediction ? `<prediction-prompt type="${prediction.type}">${prediction.prompt_text}</prediction-prompt>` : "",
     options,
@@ -231,6 +247,68 @@ export function streamProtege(
     },
     { signal },
   );
+}
+
+// ── QUIZ / TRANSFER PROBE ───────────────────────────────────────────────────
+
+const QuizSchema = z.object({ questions: z.array(z.string()) });
+const GradeSchema = z.object({ correct: z.boolean(), feedback: z.string() });
+
+export async function buildQuiz(
+  args: { kind: QuizKind; question: string; answer: string; predictionMiss: string | null },
+  signal?: AbortSignal,
+): Promise<string[]> {
+  const res = await anthropic().beta.messages.parse(
+    {
+      ...FALLBACK,
+      model: MODELS.reason,
+      max_tokens: 8000,
+      output_config: { effort: "medium", format: betaZodOutputFormat(QuizSchema) },
+      system: [{ type: "text", text: loadPrompt("quiz"), cache_control: { type: "ephemeral" } }],
+      messages: [
+        {
+          role: "user",
+          content: [
+            `<kind>${args.kind}</kind>`,
+            `<question>${args.question}</question>`,
+            `<answer>\n${args.answer}\n</answer>`,
+            args.predictionMiss ? `<what-they-got-wrong>${args.predictionMiss}</what-they-got-wrong>` : "",
+          ]
+            .filter(Boolean)
+            .join("\n"),
+        },
+      ],
+    },
+    { signal },
+  );
+  const wanted = args.kind === "transfer" ? 1 : 3;
+  return (res.parsed_output?.questions ?? []).slice(0, wanted);
+}
+
+export async function gradeQuizAnswer(
+  args: { question: string; answer: string; userAnswer: string },
+  signal?: AbortSignal,
+): Promise<{ correct: boolean; feedback: string }> {
+  const res = await anthropic().beta.messages.parse(
+    {
+      ...FALLBACK,
+      model: MODELS.reason,
+      max_tokens: 4000,
+      output_config: { effort: "low", format: betaZodOutputFormat(GradeSchema) },
+      system: [{ type: "text", text: loadPrompt("quiz"), cache_control: { type: "ephemeral" } }],
+      messages: [
+        {
+          role: "user",
+          content:
+            `Grade this.\n<quiz-question>${args.question}</quiz-question>\n` +
+            `<reference-answer>\n${args.answer}\n</reference-answer>\n` +
+            `<their-answer>${args.userAnswer}</their-answer>`,
+        },
+      ],
+    },
+    { signal },
+  );
+  return res.parsed_output ?? { correct: false, feedback: "Could not grade that one." };
 }
 
 // ── CONCEPT TAGGING (§6) ────────────────────────────────────────────────────

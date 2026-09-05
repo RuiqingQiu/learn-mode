@@ -1,6 +1,33 @@
 // Shared vocabulary between the route handlers and the client. §6.
 
 export type Mode = "answer" | "learn";
+
+/** What the user wants to happen after the answer. Not a claim about cognition. */
+export type Reinforcement = "teach_back" | "quiz" | "transfer_probe";
+/** How much of the answer should be structure rather than paragraphs. */
+export type Density = "prose" | "balanced" | "visual";
+
+export interface Preferences {
+  reinforcement: Reinforcement;
+  density: Density;
+}
+
+export const DEFAULT_PREFERENCES: Preferences = {
+  reinforcement: "teach_back",
+  density: "balanced",
+};
+
+export type QuizKind = "recall" | "transfer";
+
+export interface QuizQuestion {
+  id: string;
+  idx: number;
+  kind: QuizKind;
+  question: string;
+  user_answer: string | null;
+  feedback: string | null;
+  was_correct: boolean | null;
+}
 export type TriageResult = "lookup" | "learnable";
 export type ExchangeState = "predicting" | "revealing" | "teaching" | "done";
 export type PredictionType = "open" | "choice" | "code_choice" | "which_breaks";
@@ -61,6 +88,7 @@ export interface ExchangeRecord {
   prediction: PredictionRecord | null;
   answer: AnswerRecord | null;
   teach_turns: TeachTurnRecord[];
+  quiz: QuizQuestion[];
 }
 
 export interface ThreadSummary {

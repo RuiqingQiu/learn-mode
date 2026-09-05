@@ -3,10 +3,21 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Composer from "./Composer";
 import ExchangeView from "./ExchangeView";
+import Onboarding from "./Onboarding";
 import TeachPanel from "./TeachPanel";
 import { api, blankExchange, fromRecord, readSSE } from "@/lib/client";
 import type { LiveExchange } from "@/lib/client";
-import type { Confidence, Mode, PredictPrompt, SectionName, ThreadSummary, TriageResult } from "@/lib/types";
+import { DEFAULT_PREFERENCES } from "@/lib/types";
+import type {
+  Confidence,
+  Mode,
+  PredictPrompt,
+  Preferences,
+  QuizKind,
+  SectionName,
+  ThreadSummary,
+  TriageResult,
+} from "@/lib/types";
 
 type Ev = Record<string, unknown>;
 
@@ -20,6 +31,9 @@ export default function Chat({ ephemeral = false }: { ephemeral?: boolean }) {
   const [flipNote, setFlipNote] = useState(false);
   const [fatal, setFatal] = useState<string | null>(null);
   const [focusComposer, setFocusComposer] = useState(0);
+  const [prefs, setPrefs] = useState<Preferences | null>(null);
+  const [prefsLoaded, setPrefsLoaded] = useState(false);
+  const [editingPrefs, setEditingPrefs] = useState(false);
 
   const bottom = useRef<HTMLDivElement>(null);
 
@@ -42,6 +56,9 @@ export default function Chat({ ephemeral = false }: { ephemeral?: boolean }) {
   useEffect(() => {
     (async () => {
       try {
+        const { preferences } = await api.getPreferences();
+        setPrefs(preferences);
+        setPrefsLoaded(true);
         const { threads } = await api.listThreads();
         if (threads.length) {
           setThreads(threads);
@@ -155,6 +172,11 @@ export default function Chat({ ephemeral = false }: { ephemeral?: boolean }) {
       setFlipKey((k) => k + 1);
       setFlipNote(true);
       setTimeout(() => setFlipNote(false), 6000);
+
+      // Then whatever the user asked for after the answer.
+      const choice = (prefs ?? DEFAULT_PREFERENCES).reinforcement;
+      if (choice === "teach_back") await explainBack(key, id);
+      else await startQuiz(key, id, choice === "transfer_probe" ? "transfer" : "recall");
     } catch (err) {
       patch(key, (e) => ({ ...e, status: "error", error: err instanceof Error ? err.message : String(err) }));
     } finally {
@@ -187,6 +209,36 @@ export default function Chat({ ephemeral = false }: { ephemeral?: boolean }) {
       patch(ex.key, (e) => ({
         ...e,
         hintPending: false,
+        error: err instanceof Error ? err.message : String(err),
+      }));
+    }
+  };
+
+  // ── QUIZ / TRANSFER PROBE ─────────────────────────────────────────────────
+
+  const startQuiz = async (key: string, id: string, kind: QuizKind) => {
+    patch(key, (e) => ({ ...e, quizPending: true, quizDismissed: false }));
+    try {
+      const { questions } = await api.startQuiz(id, kind);
+      patch(key, (e) => ({ ...e, quiz: questions, quizPending: false }));
+    } catch (err) {
+      patch(key, (e) => ({
+        ...e,
+        quizPending: false,
+        error: err instanceof Error ? err.message : String(err),
+      }));
+    }
+  };
+
+  const answerQuiz = async (key: string, id: string, questionId: string, text: string) => {
+    patch(key, (e) => ({ ...e, quizPending: true }));
+    try {
+      const { questions } = await api.answerQuiz(id, questionId, text);
+      patch(key, (e) => ({ ...e, quiz: questions, quizPending: false }));
+    } catch (err) {
+      patch(key, (e) => ({
+        ...e,
+        quizPending: false,
         error: err instanceof Error ? err.message : String(err),
       }));
     }
@@ -308,6 +360,21 @@ export default function Chat({ ephemeral = false }: { ephemeral?: boolean }) {
   const live = exchanges.find((e) => e.teach.turns.length > 0 && !e.teach.closed);
   const floated = live && exchanges[exchanges.length - 1]?.key !== live.key ? live : null;
 
+  if (!fatal && prefsLoaded && (!prefs || editingPrefs)) {
+    return (
+      <Onboarding
+        initial={prefs ?? DEFAULT_PREFERENCES}
+        editing={!!prefs}
+        onCancel={prefs ? () => setEditingPrefs(false) : undefined}
+        onSave={async (next) => {
+          const { preferences } = await api.savePreferences(next);
+          setPrefs(preferences);
+          setEditingPrefs(false);
+        }}
+      />
+    );
+  }
+
   if (fatal) {
     return (
       <div className="flex h-screen items-center justify-center p-8">
@@ -335,7 +402,7 @@ export default function Chat({ ephemeral = false }: { ephemeral?: boolean }) {
             Demo deployment — threads are not saved and will disappear.
           </p>
         )}
-        <nav className="flex-1 space-y-0.5 overflow-y-auto px-2 pb-4">
+        <nav className="flex-1 space-y-0.5 overflow-y-auto px-2 pb-2">
           {threads.map((t) => (
             <button
               key={t.id}
@@ -349,6 +416,13 @@ export default function Chat({ ephemeral = false }: { ephemeral?: boolean }) {
             </button>
           ))}
         </nav>
+        <button
+          type="button"
+          onClick={() => setEditingPrefs(true)}
+          className="border-t border-stone-200 px-4 py-2.5 text-left text-[12.5px] text-stone-500 transition hover:bg-stone-200/50 hover:text-stone-800"
+        >
+          Preferences
+        </button>
       </aside>
 
       <main className="flex min-w-0 flex-1 flex-col">
@@ -378,6 +452,9 @@ export default function Chat({ ephemeral = false }: { ephemeral?: boolean }) {
                   void askMainChat(ex.key, ex.id, ex.teach.turns[ex.teach.turns.length - 1]?.junior ?? "")
                 }
                 onClearTeaching={() => void clearTeaching(ex.key, ex.id)}
+                onQuizAnswer={(qid: string, text: string) => void answerQuiz(ex.key, ex.id, qid, text)}
+                onQuizDismiss={() => patch(ex.key, (e) => ({ ...e, quizDismissed: true }))}
+                quizKind={(prefs ?? DEFAULT_PREFERENCES).reinforcement === "transfer_probe" ? "transfer" : "recall"}
                 renderTeach={!floated || floated.key !== ex.key}
               />
             ))}

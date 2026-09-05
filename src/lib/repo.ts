@@ -1,6 +1,11 @@
 import { db, newId, now } from "./db";
 import type {
   AnswerRecord,
+  Density,
+  Preferences,
+  QuizKind,
+  QuizQuestion,
+  Reinforcement,
   Confidence,
   ExchangeRecord,
   ExchangeState,
@@ -12,6 +17,72 @@ import type {
   ThreadSummary,
   TriageResult,
 } from "./types";
+import { DEFAULT_PREFERENCES } from "./types";
+
+// ── preferences (§2: single local user, so one row) ────────────────────────
+
+const PREF_ID = "singleton";
+
+export function getPreferences(): Preferences | null {
+  const row = db()
+    .prepare("SELECT reinforcement, density FROM preferences WHERE id = ?")
+    .get(PREF_ID) as { reinforcement: Reinforcement; density: Density } | undefined;
+  return row ?? null;
+}
+
+/** Null until the setup screen has been completed — that is how onboarding is gated. */
+export function getPreferencesOrDefault(): Preferences {
+  return getPreferences() ?? DEFAULT_PREFERENCES;
+}
+
+export function savePreferences(p: Preferences): void {
+  db()
+    .prepare(
+      `INSERT INTO preferences (id, reinforcement, density, updated_at)
+       VALUES (@id, @reinforcement, @density, @updated_at)
+       ON CONFLICT(id) DO UPDATE SET
+         reinforcement = excluded.reinforcement,
+         density = excluded.density,
+         updated_at = excluded.updated_at`,
+    )
+    .run({ ...p, id: PREF_ID, updated_at: now() });
+}
+
+// ── quiz ────────────────────────────────────────────────────────────────────
+
+export function saveQuizQuestions(
+  exchangeId: string,
+  kind: QuizKind,
+  questions: string[],
+): QuizQuestion[] {
+  const conn = db();
+  conn.prepare("DELETE FROM quiz_questions WHERE exchange_id = ?").run(exchangeId);
+  const insert = conn.prepare(
+    `INSERT INTO quiz_questions (id, exchange_id, idx, kind, question) VALUES (?, ?, ?, ?, ?)`,
+  );
+  conn.transaction(() => {
+    questions.forEach((q, idx) => insert.run(newId(), exchangeId, idx, kind, q));
+  })();
+  return getQuiz(exchangeId);
+}
+
+export function getQuiz(exchangeId: string): QuizQuestion[] {
+  const rows = db()
+    .prepare("SELECT * FROM quiz_questions WHERE exchange_id = ? ORDER BY idx")
+    .all(exchangeId) as (Omit<QuizQuestion, "was_correct"> & { was_correct: number | null })[];
+  return rows.map((r) => ({ ...r, was_correct: r.was_correct === null ? null : !!r.was_correct }));
+}
+
+export function saveQuizAnswer(
+  questionId: string,
+  answer: string,
+  feedback: string,
+  wasCorrect: boolean | null,
+): void {
+  db()
+    .prepare("UPDATE quiz_questions SET user_answer = ?, feedback = ?, was_correct = ? WHERE id = ?")
+    .run(answer, feedback, wasCorrect === null ? null : wasCorrect ? 1 : 0, questionId);
+}
 
 // ── threads ─────────────────────────────────────────────────────────────────
 
@@ -287,6 +358,7 @@ export function listExchanges(threadId: string): ExchangeRecord[] {
     prediction: getPrediction(r.id),
     answer: getAnswer(r.id),
     teach_turns: getTeachTurns(r.id),
+    quiz: getQuiz(r.id),
   }));
 }
 
