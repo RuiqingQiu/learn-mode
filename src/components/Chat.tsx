@@ -366,6 +366,15 @@ export default function Chat({ ephemeral = false }: { ephemeral?: boolean }) {
         initial={prefs ?? DEFAULT_PREFERENCES}
         editing={!!prefs}
         onCancel={prefs ? () => setEditingPrefs(false) : undefined}
+        onReset={
+          prefs
+            ? async () => {
+                await api.resetPreferences();
+                setPrefs(null);
+                setEditingPrefs(false);
+              }
+            : undefined
+        }
         onSave={async (next) => {
           const { preferences } = await api.savePreferences(next);
           setPrefs(preferences);
@@ -403,25 +412,56 @@ export default function Chat({ ephemeral = false }: { ephemeral?: boolean }) {
           </p>
         )}
         <nav className="flex-1 space-y-0.5 overflow-y-auto px-2 pb-2">
-          {threads.map((t) => (
-            <button
-              key={t.id}
-              type="button"
-              onClick={() => openThread(t.id)}
-              className={`block w-full truncate rounded-md px-2 py-1.5 text-left text-[13px] transition ${
-                t.id === threadId ? "bg-stone-200/80 text-stone-900" : "text-stone-600 hover:bg-stone-200/50"
-              }`}
-            >
-              {t.title}
-            </button>
-          ))}
+          {threads
+            .filter((t) => !t.is_example)
+            .map((t) => (
+              <button
+                key={t.id}
+                type="button"
+                onClick={() => openThread(t.id)}
+                className={`block w-full truncate rounded-md px-2 py-1.5 text-left text-[13px] transition ${
+                  t.id === threadId ? "bg-stone-200/80 text-stone-900" : "text-stone-600 hover:bg-stone-200/50"
+                }`}
+              >
+                {t.title}
+              </button>
+            ))}
+
+          {/* Worked examples, so there is something to look at before you have
+              asked anything. Kept visually separate from your own threads. */}
+          {threads.some((t) => t.is_example) && (
+            <div className="pt-4">
+              <p className="px-2 pb-1 text-[10.5px] font-medium tracking-wide text-stone-400 uppercase">
+                Examples — have a look first
+              </p>
+              {threads
+                .filter((t) => t.is_example)
+                .map((t) => (
+                  <button
+                    key={t.id}
+                    type="button"
+                    onClick={() => openThread(t.id)}
+                    className={`block w-full truncate rounded-md px-2 py-1.5 text-left text-[13px] italic transition ${
+                      t.id === threadId
+                        ? "bg-stone-200/80 text-stone-900"
+                        : "text-stone-500 hover:bg-stone-200/50"
+                    }`}
+                  >
+                    {t.title}
+                  </button>
+                ))}
+            </div>
+          )}
         </nav>
         <button
           type="button"
           onClick={() => setEditingPrefs(true)}
-          className="border-t border-stone-200 px-4 py-2.5 text-left text-[12.5px] text-stone-500 transition hover:bg-stone-200/50 hover:text-stone-800"
+          className="flex items-center gap-2 border-t border-stone-200 px-4 py-3 text-left text-[12.5px] text-stone-600 transition hover:bg-stone-200/50 hover:text-stone-900"
         >
-          Preferences
+          <span aria-hidden>⚙</span> Preferences
+          <span className="ml-auto font-mono text-[10.5px] text-stone-400">
+            {(prefs ?? DEFAULT_PREFERENCES).density}
+          </span>
         </button>
       </aside>
 

@@ -30,6 +30,16 @@ thing.
 
 Committing a guess isn't configurable. It's the part carrying the weight.
 
+**Reset** — the Preferences screen has a *Reset — show this as a first run*
+control, which clears your settings and brings the setup screen back. Useful for
+demoing.
+
+**Examples** — a fresh install seeds three worked examples in the sidebar so
+there's something to look at before you've asked anything: a wrong prediction
+with the delta and a full explain-back transcript, a broad topic narrowed to one
+concept with a quiz, and Learn mode on a lookup where triage bails out. They're
+real captured output; `npm run gen:examples` regenerates them.
+
 ## The loop
 
 ```

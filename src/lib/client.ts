@@ -81,6 +81,7 @@ export const api = {
 
   getPreferences: () => json<{ preferences: Preferences | null }>("/api/preferences"),
   savePreferences: (p: Preferences) => post<{ preferences: Preferences }>("/api/preferences", p),
+  resetPreferences: () => json<{ preferences: null }>("/api/preferences", { method: "DELETE" }),
 
   startQuiz: (exchangeId: string, kind: QuizKind) =>
     post<{ questions: QuizQuestion[] }>("/api/quiz", { action: "start", exchangeId, kind }),
@@ -230,7 +231,7 @@ export function fromRecord(r: ExchangeRecord): LiveExchange {
     correctOption: r.prediction?.correct_option ?? null,
     quiz: r.quiz,
     quizPending: false,
-    quizDismissed: r.quiz.length > 0 && r.quiz.every((q) => q.user_answer !== null),
+    quizDismissed: false,
     revealStreaming: false,
     sections: {
       gist: r.answer?.gist ?? undefined,

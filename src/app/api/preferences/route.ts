@@ -11,6 +11,12 @@ export async function GET() {
   return NextResponse.json({ preferences: repo.getPreferences() });
 }
 
+/** Reset to the first-run state. Useful for demoing the setup step. */
+export async function DELETE() {
+  repo.clearPreferences();
+  return NextResponse.json({ preferences: null });
+}
+
 export async function POST(req: Request) {
   try {
     const body = (await req.json()) as Preferences;

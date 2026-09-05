@@ -1,4 +1,5 @@
 import Database from "better-sqlite3";
+import { EXAMPLE_THREADS } from "./examples";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -116,6 +117,7 @@ export function db(): Database.Database {
   conn.pragma("foreign_keys = ON");
   conn.exec(SCHEMA);
   migrate(conn);
+  seedExamples(conn);
   _db = conn;
   return conn;
 }
@@ -130,6 +132,38 @@ function migrate(conn: Database.Database) {
   add("predictions", "correct_option", "TEXT");
   // Set when an exchange carried another exchange's explain-back transcript.
   add("exchanges", "context_exchange_id", "TEXT");
+  // Worked examples seeded on first run so the app is not an empty box.
+  add("threads", "is_example", "INTEGER NOT NULL DEFAULT 0");
+}
+
+/**
+ * Worked examples, so a fresh install is not an empty box with a toggle in it.
+ * They are real captured output (see scripts/generate-examples.mjs) inserted
+ * with fixed ids, so this is idempotent. Deleting one brings it back on the next
+ * boot — acceptable while there is no delete UI, and desirable for the demo.
+ */
+function seedExamples(conn: Database.Database) {
+  const insert = (table: string, row: Record<string, unknown>) => {
+    const cols = Object.keys(row);
+    conn
+      .prepare(
+        `INSERT OR IGNORE INTO ${table} (${cols.join(", ")}) VALUES (${cols.map((c) => "@" + c).join(", ")})`,
+      )
+      .run(row);
+  };
+
+  conn.transaction(() => {
+    for (const seed of EXAMPLE_THREADS) {
+      insert("threads", { ...seed.thread, is_example: 1 });
+      for (const ex of seed.exchanges) {
+        insert("exchanges", ex.exchange);
+        for (const r of ex.predictions) insert("predictions", r);
+        for (const r of ex.answers) insert("answers", r);
+        for (const r of ex.teach_turns) insert("teach_turns", r);
+        for (const r of ex.quiz) insert("quiz_questions", r);
+      }
+    }
+  })();
 }
 
 export const newId = () => crypto.randomUUID();

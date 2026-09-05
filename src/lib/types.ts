@@ -95,6 +95,8 @@ export interface ThreadSummary {
   id: string;
   title: string;
   created_at: number;
+  /** Seeded worked example, not something the user asked. */
+  is_example: boolean;
 }
 
 // ── SSE payloads ────────────────────────────────────────────────────────────

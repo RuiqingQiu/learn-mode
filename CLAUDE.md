@@ -142,7 +142,26 @@ hidden, because retrieval is the point and re-reading is what feels like learnin
 without being it. Two edges that were bugs first: do **not** hide it while the
 questions are still generating (the user is left staring at a spinner), and do
 **not** keep hiding it once every question is answered (the card says the answer
-is back). `Show it anyway` is always there.
+is back). A finished quiz stays on screen as a record of what you answered — do
+not derive "dismissed" from "all answered", or reloading loses the transcript.
+`Show it anyway` is always there.
+
+### 6. Examples are real captured output, not hand-written imitations
+
+A fresh install seeds three worked examples (`src/lib/examples.ts`, seeded by
+`seedExamples()` in `db.ts` with fixed ids, so it is idempotent). They cover the
+three shapes worth seeing before you have asked anything: a wrong prediction with
+the full delta and a complete explain-back transcript; a broad topic narrowed to
+one concept with a correct prediction and a quiz; and Learn mode on a pure lookup
+where triage bails out.
+
+They were produced by running the real pipeline — `npm run gen:examples`
+regenerates them (needs `npm run dev` and about $0.50). **Do not hand-edit
+`examples.ts`.** If a prompt change makes the examples misrepresent the product,
+regenerate rather than patch, or the demo starts lying about what the app does.
+
+Deleting an example brings it back on the next boot. That is deliberate while
+there is no delete UI, and right for a demo.
 
 ## Layout
 

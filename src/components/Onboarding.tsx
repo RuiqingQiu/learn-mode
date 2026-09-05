@@ -32,11 +32,14 @@ export default function Onboarding({
   editing,
   onSave,
   onCancel,
+  onReset,
 }: {
   initial: Preferences;
   editing: boolean;
   onSave: (p: Preferences) => void;
   onCancel?: () => void;
+  /** Only while editing — drops back to the first-run state. */
+  onReset?: () => void;
 }) {
   const [reinforcement, setReinforcement] = useState<Reinforcement>(initial.reinforcement);
   const [density, setDensity] = useState<Density>(initial.density);
@@ -129,6 +132,15 @@ export default function Onboarding({
               className="text-[13.5px] text-stone-500 underline underline-offset-2 transition hover:text-stone-800"
             >
               Cancel
+            </button>
+          )}
+          {onReset && (
+            <button
+              type="button"
+              onClick={onReset}
+              className="ml-auto text-[13px] text-stone-400 underline underline-offset-2 transition hover:text-stone-700"
+            >
+              Reset — show this as a first run
             </button>
           )}
         </div>

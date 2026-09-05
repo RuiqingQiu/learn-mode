@@ -48,6 +48,11 @@ export function savePreferences(p: Preferences): void {
     .run({ ...p, id: PREF_ID, updated_at: now() });
 }
 
+/** Back to the first-run state, so the setup screen prompts again. */
+export function clearPreferences(): void {
+  db().prepare("DELETE FROM preferences WHERE id = ?").run(PREF_ID);
+}
+
 // ── quiz ────────────────────────────────────────────────────────────────────
 
 export function saveQuizQuestions(
@@ -89,15 +94,27 @@ export function saveQuizAnswer(
 export function createThread(title = "New thread"): ThreadSummary {
   const row = { id: newId(), title, created_at: now() };
   db().prepare("INSERT INTO threads (id, title, created_at) VALUES (@id, @title, @created_at)").run(row);
-  return row;
+  return { ...row, is_example: false };
 }
 
 export function listThreads(): ThreadSummary[] {
-  return db().prepare("SELECT id, title, created_at FROM threads ORDER BY created_at DESC").all() as ThreadSummary[];
+  const rows = db()
+    .prepare("SELECT id, title, created_at, is_example FROM threads")
+    .all() as (Omit<ThreadSummary, "is_example"> & { is_example: number })[];
+  const all = rows.map((r) => ({ ...r, is_example: !!r.is_example }));
+  // Your own threads newest-first; the examples last, in the order they were
+  // written, because they read as a sequence.
+  return [
+    ...all.filter((t) => !t.is_example).sort((a, b) => b.created_at - a.created_at),
+    ...all.filter((t) => t.is_example).sort((a, b) => a.created_at - b.created_at),
+  ];
 }
 
 export function getThread(id: string): ThreadSummary | null {
-  return (db().prepare("SELECT id, title, created_at FROM threads WHERE id = ?").get(id) as ThreadSummary) ?? null;
+  const r = db()
+    .prepare("SELECT id, title, created_at, is_example FROM threads WHERE id = ?")
+    .get(id) as (Omit<ThreadSummary, "is_example"> & { is_example: number }) | undefined;
+  return r ? { ...r, is_example: !!r.is_example } : null;
 }
 
 export function deleteThread(id: string): void {
