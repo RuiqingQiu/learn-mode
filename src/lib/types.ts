@@ -97,6 +97,8 @@ export interface ThreadSummary {
   created_at: number;
   /** Seeded worked example, not something the user asked. */
   is_example: boolean;
+  /** For examples: which preference combination this one shows. */
+  example_note: string | null;
 }
 
 // ── SSE payloads ────────────────────────────────────────────────────────────

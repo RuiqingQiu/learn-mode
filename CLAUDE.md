@@ -148,15 +148,32 @@ not derive "dismissed" from "all answered", or reloading loses the transcript.
 
 ### 6. Examples are real captured output, not hand-written imitations
 
-A fresh install seeds three worked examples (`src/lib/examples.ts`, seeded by
-`seedExamples()` in `db.ts` with fixed ids, so it is idempotent). They cover the
-three shapes worth seeing before you have asked anything: a wrong prediction with
-the full delta and a complete explain-back transcript; a broad topic narrowed to
-one concept with a correct prediction and a quiz; and Learn mode on a pure lookup
-where triage bails out.
+A fresh install seeds six worked examples (`src/lib/examples.ts`, seeded by
+`seedExamples()` in `db.ts` with fixed ids, so it is idempotent). Each was
+generated **under its own preferences** and carries an `example_note` naming the
+combination, so they demonstrate the settings rather than describing them:
+
+| Example | Shows |
+|---|---|
+| `defer` in a loop | `teach_back` + `visual` — wrong guess, full delta, complete explain-back |
+| "learn about cassandra db" | `quiz` + `visual` — broad topic narrowed, correct guess, graded quiz |
+| Python default arguments | `transfer_probe` + `balanced` |
+| "why does an index slow a query" | `prose` — the prediction is **skipped** |
+| the same question again | `visual` — also skipped |
+| rsync flag | Learn mode where triage bails out |
+
+The last two exist only to compare formats, which is why both skip the
+prediction: no delta means the two answers differ in shape and nothing else (0
+markdown tables vs 11 on identical input). If you regenerate and one of them
+picks up a delta, the comparison is no longer clean.
+
+Viewing an example shows a banner saying so and that preferences are unchanged —
+browsing must never look like it altered your settings.
 
 They were produced by running the real pipeline — `npm run gen:examples`
-regenerates them (needs `npm run dev` and about $0.50). **Do not hand-edit
+regenerates all of them (needs `npm run dev` and about $1). It sets the
+preferences for each scenario in turn and clears them at the end, so a fresh boot
+still shows the setup step. **Do not hand-edit
 `examples.ts`.** If a prompt change makes the examples misrepresent the product,
 regenerate rather than patch, or the demo starts lying about what the app does.
 

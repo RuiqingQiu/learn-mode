@@ -134,6 +134,8 @@ function migrate(conn: Database.Database) {
   add("exchanges", "context_exchange_id", "TEXT");
   // Worked examples seeded on first run so the app is not an empty box.
   add("threads", "is_example", "INTEGER NOT NULL DEFAULT 0");
+  // Which preference combination a seeded example demonstrates.
+  add("threads", "example_note", "TEXT");
 }
 
 /**
@@ -154,7 +156,7 @@ function seedExamples(conn: Database.Database) {
 
   conn.transaction(() => {
     for (const seed of EXAMPLE_THREADS) {
-      insert("threads", { ...seed.thread, is_example: 1 });
+      insert("threads", { ...seed.thread, is_example: 1, example_note: seed.note });
       for (const ex of seed.exchanges) {
         insert("exchanges", ex.exchange);
         for (const r of ex.predictions) insert("predictions", r);

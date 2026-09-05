@@ -34,11 +34,21 @@ Committing a guess isn't configurable. It's the part carrying the weight.
 control, which clears your settings and brings the setup screen back. Useful for
 demoing.
 
-**Examples** — a fresh install seeds three worked examples in the sidebar so
-there's something to look at before you've asked anything: a wrong prediction
-with the delta and a full explain-back transcript, a broad topic narrowed to one
-concept with a quiz, and Learn mode on a lookup where triage bails out. They're
-real captured output; `npm run gen:examples` regenerates them.
+**Examples** — a fresh install seeds six worked examples in the sidebar, each
+labelled with the preference combination that produced it, so you can see what
+the settings actually do before choosing:
+
+- *Explain it back · mostly tables & diagrams* — a wrong guess, the delta, and a
+  full four-turn explain-back with the exit summary
+- *Quiz me afterwards · mostly tables & diagrams* — a broad topic narrowed to one
+  concept, a correct guess, then a graded quiz
+- *One transfer question · balanced*
+- *Same question · mostly prose* and *· mostly tables & diagrams* — the identical
+  question at both extremes, side by side
+- *Triage bailed out* — Learn mode on a pure lookup
+
+They're real captured output, not mock-ups. `npm run gen:examples` regenerates
+them.
 
 ## The loop
 

@@ -6,6 +6,8 @@
 
 export interface SeedThread {
   thread: { id: string; title: string; created_at: number };
+  /** Which preference combination this example demonstrates. */
+  note: string;
   exchanges: {
     exchange: Record<string, unknown>;
     predictions: Record<string, unknown>[];
@@ -18,29 +20,30 @@ export interface SeedThread {
 export const EXAMPLE_THREADS: SeedThread[] = [
   {
     "thread": {
-      "id": "e041f96c-9cb4-4c28-9529-2313cab48314",
+      "id": "fd699ce0-851c-4ca8-abbd-f62eea64e688",
       "title": "Does a defer inside a for loop run at the end of each iteration, or at",
-      "created_at": 1788646384303
+      "created_at": 1788649684689
     },
+    "note": "Explain it back · mostly tables & diagrams",
     "exchanges": [
       {
         "exchange": {
-          "id": "d26ea66c-593d-441a-87a1-72ff04e863ae",
-          "thread_id": "e041f96c-9cb4-4c28-9529-2313cab48314",
+          "id": "2dc77f1b-7400-4c9c-a176-9eb9187fad27",
+          "thread_id": "fd699ce0-851c-4ca8-abbd-f62eea64e688",
           "mode": "learn",
           "question": "Does a defer inside a for loop run at the end of each iteration, or at the end of the function?",
           "triage_result": "learnable",
           "state": "done",
-          "created_at": 1788646384350,
+          "created_at": 1788649684736,
           "context_exchange_id": null
         },
         "predictions": [
           {
-            "id": "c3dcb99e-ee98-4c5a-9f8c-403bbd921fb9",
-            "exchange_id": "d26ea66c-593d-441a-87a1-72ff04e863ae",
+            "id": "43c3b5e4-ed46-4071-bee5-4376c97f581b",
+            "exchange_id": "2dc77f1b-7400-4c9c-a176-9eb9187fad27",
             "type": "choice",
-            "prompt_text": "You loop over 1000 filenames, and inside the loop body you open each file and write `defer f.Close()`. At what point are those Close calls actually executed?",
-            "options": "[{\"id\":\"a\",\"label\":\"Each Close runs when its iteration's loop body finishes, so at most one file is open at a time\"},{\"id\":\"b\",\"label\":\"All 1000 Closes run when the enclosing function returns, so all 1000 files stay open until then\"},{\"id\":\"c\",\"label\":\"Only the last iteration's Close runs, since each defer in the same statement position replaces the previous one\"}]",
+            "prompt_text": "In Go, a file is opened and deferred inside a loop that runs 1000 times. At the moment the 500th iteration ends, how many of those files have been closed?",
+            "options": "[{\"id\":\"a\",\"label\":\"499 — each deferred call fires as its iteration ends\"},{\"id\":\"b\",\"label\":\"0 — all 1000 will close together when the enclosing function returns\"},{\"id\":\"c\",\"label\":\"500 — the defer fires at the end of its own iteration, including the current one\"}]",
             "text": "a",
             "confidence": "med",
             "skipped": 0,
@@ -51,49 +54,49 @@ export const EXAMPLE_THREADS: SeedThread[] = [
         ],
         "answers": [
           {
-            "id": "24ce9459-c04b-4593-91b6-e85595955397",
-            "exchange_id": "d26ea66c-593d-441a-87a1-72ff04e863ae",
-            "gist": "Deferred calls run when the enclosing *function* returns, so all 1000 `f.Close()` calls pile up on a stack and fire at once at the end — with all 1000 files held open until then.",
-            "core": "Every `defer` statement pushes a call — function value plus already-evaluated arguments — onto a stack that belongs to the current function invocation, not to any block inside it. Nothing pops that stack until the function returns, whether by `return`, by falling off the end, or by panicking. A loop body finishing is not a return, so each iteration just pushes one more entry and moves on. After 1000 iterations you have 1000 pending `Close` calls and 1000 live file descriptors, which then unwind in last-in-first-out order all at once.",
-            "full": "## What the stack looks like mid-loop\n\n```\n  iteration 3 in progress\n  ┌─────────────────────────────────────────────┐\n  │ function frame: processAll()                │\n  │                                             │\n  │ defer stack:                                │\n  │   [ f1.Close ][ f2.Close ][ f3.Close ]      │\n  │                                ^ pops first │\n  │ open fds: 3 and counting ────────────────►  │\n  └─────────────────────────────────────────────┘\n             ↑ nothing here runs until processAll returns\n```\n\n## The three options, mapped\n\n| Option | What it assumes | Reality |\n|---|---|---|\n| a — per-iteration | `defer` is block-scoped | No; scope for `defer` is the function |\n| b — all at return | `defer` is function-scoped, LIFO | **Correct** |\n| c — last one wins | `defer` overwrites by source position | No; each *execution* of the statement pushes a new entry |\n\nOption c is worth naming explicitly: `defer` is a runtime statement, not a declaration. The same line executed 1000 times registers 1000 separate calls.\n\n## The fix: give each iteration its own function\n\n```go\n// BROKEN: 1000 fds held open\nfor _, name := range names {\n    f, err := os.Open(name)\n    if err != nil { return err }\n    defer f.Close()          // pushed onto processAll's stack\n    process(f)\n}\n```\n\n```go\n// FIXED: closure creates a real function boundary\nfor _, name := range names {\n    err := func() error {\n        f, err := os.Open(name)\n        if err != nil { return err }\n        defer f.Close()      // pushed onto the closure's stack\n        return process(f)    // Close runs here, every iteration\n    }()\n    if err != nil { return err }\n}\n```\n\nOr skip `defer` entirely and close explicitly on every path — fine when the body is short and has one exit.\n\n## Timing details that follow from the same mechanism\n\n| Aspect | Behaviour |\n|---|---|\n| Order | LIFO — last registered runs first |\n| Arguments | Evaluated at `defer` time, not at call time |\n| Panics | Deferred calls still run while unwinding |\n| `os.Exit` | Deferred calls do **not** run |\n| Loop variable capture | `defer f.Close()` captures `f`'s value now (method receiver is an argument), so each entry closes the right file |\n\nThat last row is the one people conflate with the pre-Go-1.22 loop variable bug. Here it is safe: `f.Close` evaluates the receiver `f` immediately. But `defer func() { f.Close() }()` inside a loop is a *closure* over `f`, and that is a different question about capture semantics.\n\n## Where it actually bites\n\n- Default fd limit on Linux is often 1024. A 1000-file loop sits right on the edge.\n- Same shape with `mu.Unlock()` in a loop: you hold the lock for the whole function and serialise everything, or deadlock on a non-reentrant re-lock.\n- Same shape with `rows.Close()` on database queries: connection pool exhaustion, which looks like a hang rather than an error.\n- Each `defer` also costs a little memory and time, so a hot loop registering millions of them is a leak in its own right.",
-            "delta_held_up": "You read `defer` as scoped to the block it sits in, which is the correct instinct for nearly everything else in Go — `:=` declarations, shadowing, and variable lifetime all end at the closing brace.",
-            "delta_off": "`defer` registers against the function frame, not the enclosing block. The belief to update is \"braces create a defer boundary.\" They don't — which is why this exact pattern is the classic way to hit `too many open files` (EMFILE) partway through a large directory walk, long before the function ever returns."
+            "id": "3e908eac-3750-4338-abc2-e7d1e08ffa9e",
+            "exchange_id": "2dc77f1b-7400-4c9c-a176-9eb9187fad27",
+            "gist": "Zero — `defer` runs when the *function* returns, so all 1000 files stay open until the loop finishes and the enclosing function exits.",
+            "core": "Every `defer` pushes its call onto a stack owned by the currently executing function, not by the block it appears in. That stack is only unwound when the function returns — normally or via panic — and it unwinds in LIFO order. A `for` loop is control flow inside a single frame, so 1000 iterations push 1000 entries onto one stack and nothing pops until the function itself exits. The iteration ending is not an event `defer` knows about.",
+            "full": "## What the stack actually looks like\n\n```\n  func processAll() {                  frame: processAll\n      for i := 0; i < 1000; i++ {      ─────────────────────────────\n          f, _ := os.Open(...)         defer stack grows:\n          defer f.Close()              [ Close#1 ]\n      }                                [ Close#1 ][ Close#2 ]\n      // ... still here, 1000 open     [ Close#1 ]...[ Close#1000 ]\n  }                                    ─────────────────────────────\n  ^ returns here                       now unwinds, LIFO:\n                                       Close#1000 → Close#999 → ... → Close#1\n```\n\nAt the end of iteration 500: **500 registered, 0 executed.**\n\n## What actually triggers the unwind\n\n| Event | Deferred calls run? |\n|---|---|\n| Loop iteration ends | No |\n| `break` out of the loop | No |\n| `continue` | No |\n| Enclosing function returns | Yes, all of them, LIFO |\n| Enclosing function panics | Yes, all of them, LIFO |\n| `os.Exit()` | **No** — defers are skipped entirely |\n\n## The two standard fixes\n\n**1. Extract the body into its own function.** Now each iteration *is* a frame, so the defer boundary lands where you expected it to.\n\n```go\nfor _, name := range names {\n    if err := process(name); err != nil {\n        return err\n    }\n}\n\nfunc process(name string) error {\n    f, err := os.Open(name)\n    if err != nil {\n        return err\n    }\n    defer f.Close()   // fires when process returns — once per file\n    return doWork(f)\n}\n```\n\n**2. Close explicitly, no defer.** Fine when the body is short and has one exit path, but you lose panic-safety.\n\n```go\nfor _, name := range names {\n    f, err := os.Open(name)\n    if err != nil {\n        return err\n    }\n    err = doWork(f)\n    f.Close()          // runs every iteration\n    if err != nil {\n        return err\n    }\n}\n```\n\nAn inline closure (`func() { ... }()`) works too and is the same idea as fix 1, but a named function usually reads better and lets you return errors cleanly.\n\n## One more trap in the same family\n\nArguments to a deferred call are evaluated *immediately*, at the `defer` statement — only the invocation is delayed.\n\n```go\nfor i := 0; i < 3; i++ {\n    defer fmt.Println(i)    // prints 2, 1, 0\n}\n```\n\nThe `i` values 0, 1, 2 are captured as they go on the stack; LIFO reverses them on the way out. `go vet` will flag the loop-defer pattern for `Close` in some cases, but it does not catch all of them — the frame rule is the thing to internalize.",
+            "delta_held_up": "You read `defer` as scoped to the block it was written in, which is how nearly everything else in Go behaves — `:=` declarations, shadowing, and variable lifetime all end at the closing brace.",
+            "delta_off": "The belief to drop is \"braces create a defer boundary.\" `defer` attaches to the *function call frame*, not the enclosing block, and the loop body is not a frame. In this exact program you hold 1000 open file descriptors simultaneously; on a typical Linux default of 1024 per process, the loop dies with \"too many open files\" somewhere past iteration 1000 — and the failure surfaces at the `os.Open` call, nowhere near the `defer` that caused it."
           }
         ],
         "teach_turns": [
           {
-            "id": "e48b8d9f-5c52-4658-abb7-15c684b1b966",
-            "exchange_id": "d26ea66c-593d-441a-87a1-72ff04e863ae",
+            "id": "2cec3887-8b71-43c4-b876-149681019122",
+            "exchange_id": "2dc77f1b-7400-4c9c-a176-9eb9187fad27",
             "idx": 0,
-            "junior_msg": "So the thing I keep tripping on — if I put `defer f.Close()` inside a `for` loop that opens 1000 files, when do those Closes actually happen?",
+            "junior_msg": "Go for it — I've been staring at a loop that opens a file and defers Close each iteration, so I'm curious. When does that Close actually fire?",
             "user_msg": "They run at the end of the function, not per iteration. The loop body isn't a function so it doesn't trigger them."
           },
           {
-            "id": "8a5f1673-5a0e-48c5-b356-d0ac839b188b",
-            "exchange_id": "d26ea66c-593d-441a-87a1-72ff04e863ae",
+            "id": "5a606d7f-7720-4469-8563-93fde6425491",
+            "exchange_id": "2dc77f1b-7400-4c9c-a176-9eb9187fad27",
             "idx": 1,
-            "junior_msg": "ok so if none of them fire until the function returns... what's actually happening to those 1000 files while the loop is still going?",
+            "junior_msg": "So if my loop opens 1000 files, at iteration 500 how many of those handles are actually closed? I want to know if I'm leaking fds while the loop is still running.",
             "user_msg": "Because defer attaches to the function's call frame. A for loop doesn't create a frame, only a function call does."
           },
           {
-            "id": "ea50086a-5654-48d1-b7d0-1a714fd1e734",
-            "exchange_id": "d26ea66c-593d-441a-87a1-72ff04e863ae",
+            "id": "b8ac03d9-45a0-475a-9347-b9ffa661b2c8",
+            "exchange_id": "2dc77f1b-7400-4c9c-a176-9eb9187fad27",
             "idx": 2,
-            "junior_msg": "right, but I asked about the files specifically — if Close hasn't run yet on file 1 by the time we're opening file 900, what state is file 1 in? does that cause a problem in practice?",
+            "junior_msg": "You kind of restated the rule instead of giving me the number — at iteration 500, how many of those 500 files are still open? And does hitting `break` change anything?",
             "user_msg": "You'd move the body into its own function — or an immediately-invoked closure — so each iteration has a frame to attach to."
           },
           {
-            "id": "2696f7ff-5b37-42c6-bab3-00c027b0d4d8",
-            "exchange_id": "d26ea66c-593d-441a-87a1-72ff04e863ae",
+            "id": "7d62b67d-dc34-4923-a774-4320adea7cfc",
+            "exchange_id": "2dc77f1b-7400-4c9c-a176-9eb9187fad27",
             "idx": 3,
-            "junior_msg": "got the fix, but I still don't get why anyone cares — if the closes all happen eventually, why is 1000 different from 3? what actually breaks?",
+            "junior_msg": "You jumped to the fix — but I still don't have the two things I asked: at iteration 500 how many are closed, and does `break` (or `continue`) flush them early?",
             "user_msg": "It evaluates the arguments at the moment the defer statement runs, so each one captures its own file handle. Only the timing is wrong."
           },
           {
-            "id": "ff5295ed-d57b-4b69-bbca-f85c5bf475da",
-            "exchange_id": "d26ea66c-593d-441a-87a1-72ff04e863ae",
+            "id": "4926cb8a-a4c9-45e5-b7ab-c0798996ca43",
+            "exchange_id": "2dc77f1b-7400-4c9c-a176-9eb9187fad27",
             "idx": 4,
-            "junior_msg": "**Where your explanation was solid:** You had the core mechanism right — `defer` binds to the function's call frame, not to any block, and a loop body finishing isn't a return. You also correctly identified the fix (a real function boundary per iteration) and knew that arguments are evaluated at `defer` time, so each entry closes the right file.\n\n**Where it got thin:** Three times I asked what happens to the files during the loop and you answered with mechanism instead — call frames, closures, argument evaluation. You never said the file descriptors stay open the whole time, and never landed on why 1000 differs from 3 (fd limits, lock hold times, connection pool exhaustion). That suggests you've learned the rule but not the consequence, which is the part that actually makes this a bug rather than trivia.",
+            "junior_msg": "**Where your explanation was solid:** You had the core rule right and stated it cleanly — `defer` binds to the function's call frame, and a `for` loop doesn't create one, so only a function call moves the boundary. You also knew the standard fix (extract the body into a function or an IIFE) and the separate point that deferred arguments are evaluated at the `defer` statement, not at call time.\n\n**Where it got thin:** You never answered how many handles are closed mid-loop, and you skipped `break`/`continue` twice. Restating \"it attaches to the frame\" instead of saying \"zero, all 500 are still open\" suggests you know the rule as a slogan but haven't traced what it means for resource use in the middle of a run — which is exactly the state where the fd leak bites. Worth also pinning down what else triggers unwinding (panic) and what doesn't (`os.Exit`).",
             "user_msg": null
           }
         ],
@@ -103,78 +106,79 @@ export const EXAMPLE_THREADS: SeedThread[] = [
   },
   {
     "thread": {
-      "id": "709423f9-3f21-4119-88f0-e881561ef688",
+      "id": "b10788bd-e2f9-4f9e-ab44-3b4950bba29c",
       "title": "I want to learn about cassandra db",
-      "created_at": 1788646432605
+      "created_at": 1788649722819
     },
+    "note": "Quiz me afterwards · mostly tables & diagrams",
     "exchanges": [
       {
         "exchange": {
-          "id": "3c842688-d90e-4047-b5ec-6819c8b77ff8",
-          "thread_id": "709423f9-3f21-4119-88f0-e881561ef688",
+          "id": "1490722d-e6b2-419e-b01f-4219bf6cd56e",
+          "thread_id": "b10788bd-e2f9-4f9e-ab44-3b4950bba29c",
           "mode": "learn",
           "question": "I want to learn about cassandra db",
           "triage_result": "learnable",
           "state": "done",
-          "created_at": 1788646432614,
+          "created_at": 1788649722824,
           "context_exchange_id": null
         },
         "predictions": [
           {
-            "id": "730427f0-b5c8-4518-a635-7471bae5c84e",
-            "exchange_id": "3c842688-d90e-4047-b5ec-6819c8b77ff8",
+            "id": "d19b0fa1-f085-4b8e-9837-6b31405a49d3",
+            "exchange_id": "1490722d-e6b2-419e-b01f-4219bf6cd56e",
             "type": "choice",
-            "prompt_text": "Cassandra's whole data model falls out of one decision, so start there: suppose you have a table of orders partitioned by customer_id, and you run a query filtering only on order_status. What does Cassandra do?",
-            "options": "[{\"id\":\"a\",\"label\":\"Runs the query across all nodes and returns correct results, just more slowly than a partition-key lookup\"},{\"id\":\"b\",\"label\":\"Rejects the query outright unless you explicitly opt into a full scan with ALLOW FILTERING\"},{\"id\":\"c\",\"label\":\"Builds a secondary index on order_status automatically the first time you filter on it\"}]",
-            "text": "b",
+            "prompt_text": "Cassandra's entire data model falls out of one decision, so start there: the partition key. If you write a query filtering on a regular column that isn't part of the primary key, what does Cassandra do?",
+            "options": "[{\"id\":\"a\",\"label\":\"Rejects the query unless you explicitly allow filtering, because it would have to scan every node\"},{\"id\":\"b\",\"label\":\"Runs it, but slower, since it builds a temporary index across the cluster automatically\"},{\"id\":\"c\",\"label\":\"Runs it at normal speed, since all nodes hold a full copy of the table's data\"}]",
+            "text": "a",
             "confidence": "high",
             "skipped": 0,
             "hinted": 0,
             "was_correct": 1,
-            "correct_option": "b"
+            "correct_option": "a"
           }
         ],
         "answers": [
           {
-            "id": "37e2bdea-476e-40b3-9b1b-c3adb5e55b27",
-            "exchange_id": "3c842688-d90e-4047-b5ec-6819c8b77ff8",
-            "gist": "Cassandra rejects it — the query planner refuses any read whose cost it can't bound to a known set of partitions, and `ALLOW FILTERING` is you signing off on the unbounded scan. Transfer probe: if you filter on `customer_id = 42 AND order_status = 'shipped'`, where the partition *is* pinned to one node — does that still need `ALLOW FILTERING`?",
-            "core": "The partition key is hashed into a token, and the token ring alone decides which nodes hold that row — there is no global, cluster-wide index from `order_status` back to partitions. So a filter on `order_status` gives the coordinator no way to name the nodes it must ask, forcing a fan-out to every replica set followed by a local scan of every SSTable. Cassandra's planner rejects any read it cannot bound to a known set of partitions, because that query's cost grows with cluster size rather than result size. `ALLOW FILTERING` doesn't make it fast; it makes it legal.",
-            "full": "## Where this sits in the wider system\n\n```\n  query  ──►  partition key ──► hash ──► token ──► node(s)\n                    │\n                    ├─ present  ──►  O(1) node lookup, allowed\n                    └─ absent   ──►  fan-out to whole ring, REJECTED\n```\n\n## What is legal, at a glance\n\n| Query shape | Legal? | Cost |\n|---|---|---|\n| `WHERE customer_id = ?` | yes | one replica set |\n| `WHERE customer_id = ? AND order_date > ?` (clustering col) | yes | range scan inside one partition |\n| `WHERE customer_id IN (?, ?)` | yes | a few replica sets |\n| `WHERE order_status = ?` | no | whole ring |\n| `WHERE order_status = ? ALLOW FILTERING` | yes | whole ring, scans everything |\n| `WHERE customer_id = ? AND order_status = ?` | no (needs `ALLOW FILTERING`) | one partition, but filter is post-read |\n\nThat last row is the transfer probe. Regular columns are not queryable at all without filtering, even when the partition is pinned — the rule is about the *primary key*, not about how many nodes get hit.\n\n## The consequence: query-first modeling\n\nRelational modeling normalizes once, then indexes to serve new queries. Cassandra has no such escape hatch, so the causality reverses:\n\n```\n  relational:   entities ──► tables ──► (indexes) ──► queries\n  cassandra:    queries  ──► tables (one per access pattern)\n```\n\nIf you need orders-by-customer *and* orders-by-status, you write two tables and dual-write to both:\n\n```sql\nCREATE TABLE orders_by_customer (\n  customer_id uuid,\n  order_date  timestamp,\n  order_id    uuid,\n  status      text,\n  PRIMARY KEY (customer_id, order_date, order_id)\n) WITH CLUSTERING ORDER BY (order_date DESC);\n\nCREATE TABLE orders_by_status (\n  status      text,\n  order_date  timestamp,\n  order_id    uuid,\n  PRIMARY KEY (status, order_date, order_id)\n);\n```\n\nDuplicating data is the normal, expected outcome, not a modelling failure. Disk is cheap; cross-node coordination is not.\n\n## Primary key anatomy\n\n```\n  PRIMARY KEY ( (customer_id, region) , order_date , order_id )\n                 └── partition key ──┘  └── clustering cols ──┘\n                     which node?          sort order + range\n                                          scans within the node\n```\n\nPartition key = placement. Clustering columns = on-disk sort order inside that partition, which is why range queries on them are free and `ORDER BY` on anything else is impossible.\n\n## The escape hatches, and why they're traps\n\n| Feature | What it does | Why it disappoints |\n|---|---|---|\n| Secondary index (2i) | Local index per node | Still fans out to every node; fine for high-cardinality *within* a known partition, bad otherwise |\n| SASI index | Richer local index (LIKE, ranges) | Same fan-out problem, plus maintenance cost |\n| Materialized views | Server-maintained second table | Long-standing correctness caveats; many teams dual-write manually instead |\n| `ALLOW FILTERING` | Permits the scan | Latency grows with data size; fine for one-off ops work, never for a serving path |\n\n## The other two things that shape Cassandra\n\n1. **Tunable consistency.** Every read and write names a consistency level (`ONE`, `QUORUM`, `ALL`). When `R + W > RF`, you get read-your-writes; below that, you trade correctness for latency and availability. This is a per-query knob, not a cluster setting.\n2. **LSM storage.** Writes go to a commit log plus an in-memory memtable, flushed to immutable SSTables and merged later by compaction. Writes are append-only and very fast; deletes are *tombstones* — markers that mask data until compaction removes them. Queue-like workloads that write and delete the same partition repeatedly accumulate tombstones and turn reads pathological.\n\nWorth predicting on next: given that a delete is just another append-only write, what happens when a node is offline during the delete and comes back after the tombstone has been compacted away?",
-            "delta_held_up": "You identified the refusal as the design point rather than a performance footnote: Cassandra treats \"I cannot predict how much work this is\" as an error condition, not a slow path.",
+            "id": "6b8afe5d-d1bf-40b9-a17d-0e36f7b3673d",
+            "exchange_id": "1490722d-e6b2-419e-b01f-4219bf6cd56e",
+            "gist": "Right — Cassandra refuses with `InvalidRequest ... use ALLOW FILTERING`, because it has no way to locate rows except by partition key. Transfer probe: given `PRIMARY KEY ((user_id), created_at, post_id)`, which of these are legal without `ALLOW FILTERING` — filtering on `created_at` alone, on `user_id` plus `post_id`, or on `user_id` plus a range of `created_at`?",
+            "core": "The partition key is hashed into a token, and that token alone determines which nodes hold the row. Everything else about a query — clustering columns, regular columns — is only resolvable *after* you have landed on the right partition. So a predicate on a non-key column gives the coordinator no starting point; the only way to answer is to ask every replica set in the ring to scan its local data, merge, and filter. Cassandra makes you type `ALLOW FILTERING` so that cost is a deliberate act rather than an accident that takes down the cluster at 3am.",
+            "full": "## What the primary key is actually made of\n\n```\nPRIMARY KEY ( (user_id, region) , created_at, post_id )\n              └──────┬───────┘   └────────┬────────┘\n              partition key         clustering columns\n              WHERE it lives        ORDER inside partition\n```\n\n| Part | Determines | Query rules |\n|---|---|---|\n| Partition key | Which nodes store the row | Must supply **all** of it, with `=` (or `IN`) |\n| Clustering columns | Sort order on disk within the partition | Usable left-to-right; last one supplied may be a range |\n| Regular columns | Nothing about placement | Not queryable without `ALLOW FILTERING` or an index |\n\nThe clustering rule is the \"no gaps\" rule: with `created_at, post_id` you may filter on `created_at`, or `created_at` + `post_id`, but not `post_id` alone.\n\n## What `ALLOW FILTERING` actually costs\n\n```\n  SELECT ... WHERE email = 'x'    (no partition key)\n\n  client → coordinator ─┬→ node A  scan local SSTables ─┐\n                        ├→ node B  scan local SSTables ─┼→ merge → filter → 1 row\n                        ├→ node C  scan local SSTables ─┤\n                        └→ ... every replica set ───────┘\n```\n\nRead cost scales with total table size, not result size. Fine on a 200-row lookup table; a cluster-wide outage on a billion-row one.\n\n## The escape hatches, and their prices\n\n| Approach | How it works | Use when |\n|---|---|---|\n| Second table (denormalization) | Write the same data again, keyed by `email` | Almost always. Disk is cheap, scatter-gather isn't |\n| Secondary index (`CREATE INDEX`) | Local index per node; read still fans out to all nodes | Low-cardinality column, already restricted to a partition |\n| Materialized view | Cassandra maintains the second table for you | Rarely — still flagged experimental, consistency edge cases |\n| SASI / SAI index | Richer local indexing (SAI is the modern one, C* 5.0) | Newer clusters, still fan-out on reads |\n\n## The mental inversion\n\nRelational: model the entities, then write whatever queries you want.\n\n```\n  RDBMS:      schema ──→ queries        (query planner adapts)\n  Cassandra:  queries ──→ schema        (you are the query planner)\n```\n\nYou list the access patterns first — \"posts by user, newest first\", \"post by id\" — and create one table per pattern. Writing `user_id` into three tables is normal and correct here, because writes are cheap (append to commitlog + memtable, no read-before-write) and there are no joins to fall back on.\n\nNext thing worth predicting on: if the same logical row is duplicated across three tables and a write to one of them fails, what does Cassandra do about the inconsistency — and what does `QUORUM` actually guarantee you?",
+            "delta_held_up": "You tied the rejection to the physical cause — the coordinator would have to fan out to every node — rather than treating it as an arbitrary CQL restriction. That causal link is the whole data model.",
             "delta_off": null
           }
         ],
         "teach_turns": [],
         "quiz": [
           {
-            "id": "6a60ea5b-69f3-463f-8f42-6aeeeaa2c13c",
-            "exchange_id": "3c842688-d90e-4047-b5ec-6819c8b77ff8",
+            "id": "74ce5fb5-386e-429a-b657-b545954f4723",
+            "exchange_id": "1490722d-e6b2-419e-b01f-4219bf6cd56e",
             "idx": 0,
             "kind": "recall",
-            "question": "Why does a query filtering only on `order_status` force the coordinator to contact every replica set, when a query on `customer_id` contacts just one?",
+            "question": "Why does a predicate on a regular column force Cassandra to contact every replica set, rather than just narrowing the search? Explain what the coordinator is missing.",
             "user_answer": "Because the partition key is hashed to pick the node, so without it there's no way to know which node holds the row.",
-            "feedback": "Right: the token ring maps only the partition key to nodes, and there is no cluster-wide index from a regular column back to partitions, so the coordinator has no way to name the nodes it needs.",
+            "feedback": "Correct — the token from the partition key is the only placement information the coordinator has, so a regular-column predicate leaves it with nothing but a full fan-out scan.",
             "was_correct": 1
           },
           {
-            "id": "0454089b-1a20-47ec-9155-06ec871731a6",
-            "exchange_id": "3c842688-d90e-4047-b5ec-6819c8b77ff8",
+            "id": "89af1b99-6dea-4db1-b855-6161b450886e",
+            "exchange_id": "1490722d-e6b2-419e-b01f-4219bf6cd56e",
             "idx": 1,
             "kind": "recall",
-            "question": "You filter on `customer_id = 42 AND order_status = 'shipped'`, so the read touches exactly one partition on one node. Cassandra still refuses it without `ALLOW FILTERING` — what is the actual rule being enforced here?",
+            "question": "With `PRIMARY KEY ((user_id), created_at, post_id)`, filtering on `user_id` plus `post_id` is rejected while `user_id` plus a range of `created_at` is fine. What property of the clustering columns makes that distinction?",
             "user_answer": "I don't know",
-            "feedback": "The rule is about the primary key, not node count: regular columns like order_status can't be used as filters at all without ALLOW FILTERING, because the planner only accepts predicates on partition and clustering columns, and the filter here happens after the rows are read. Pinning the query to one partition does not exempt it.",
+            "feedback": "Clustering columns are stored as a sort order within the partition, so they can only be used left to right with no gaps: `created_at` alone or `created_at` plus `post_id` works, but `post_id` alone gives no way to seek into the sorted rows. A range on the last supplied clustering column is fine because the rows are contiguous on disk.",
             "was_correct": 0
           },
           {
-            "id": "7fb089c4-b787-471c-ac1e-c5c6575b6039",
-            "exchange_id": "3c842688-d90e-4047-b5ec-6819c8b77ff8",
+            "id": "df287e94-9f6d-4e57-bd4a-01c484075df7",
+            "exchange_id": "1490722d-e6b2-419e-b01f-4219bf6cd56e",
             "idx": 2,
             "kind": "recall",
-            "question": "Cassandra deletes are append-only writes rather than in-place removals. Explain the mechanism by which this makes reads on a repeatedly-written-and-deleted partition degrade.",
+            "question": "A secondary index and a second denormalized table both let you query by `email`. What does the index still cost you at read time that the second table does not?",
             "user_answer": "You make a second table keyed by the column you want to query, and write to both.",
-            "feedback": "That answer describes query-first modeling with duplicate tables, which is a different point in the material than the one asked about. The question was about tombstones: a delete appends a marker rather than removing the row, so a read must still traverse and merge every tombstone in the partition across SSTables until compaction removes them, making read cost grow with the number of deletes rather than the number of live rows.",
+            "feedback": "Your answer describes the denormalization approach rather than the index's read cost. A secondary index is local to each node, so the coordinator must still fan out the query to every replica set and merge results; a second table keyed by email hashes straight to one partition on one node.",
             "was_correct": 0
           }
         ]
@@ -183,30 +187,192 @@ export const EXAMPLE_THREADS: SeedThread[] = [
   },
   {
     "thread": {
-      "id": "17c05235-ffe2-4039-ac00-ee08c68f8f8e",
-      "title": "What's the flag to make rsync preserve symlinks?",
-      "created_at": 1788646487583
+      "id": "2d295ba6-7f8b-4f40-b61e-540005e2b8db",
+      "title": "Is a Python default argument evaluated once, or once per call?",
+      "created_at": 1788649766185
     },
+    "note": "One transfer question · balanced",
     "exchanges": [
       {
         "exchange": {
-          "id": "5f892853-90cd-4658-b406-09f4fa302d72",
-          "thread_id": "17c05235-ffe2-4039-ac00-ee08c68f8f8e",
+          "id": "cb6c0743-66b6-4309-b2c3-09c1e06282be",
+          "thread_id": "2d295ba6-7f8b-4f40-b61e-540005e2b8db",
+          "mode": "learn",
+          "question": "Is a Python default argument evaluated once, or once per call?",
+          "triage_result": "learnable",
+          "state": "done",
+          "created_at": 1788649766191,
+          "context_exchange_id": null
+        },
+        "predictions": [
+          {
+            "id": "b7fa5102-3fe3-4b15-b229-54d276c0c8fb",
+            "exchange_id": "cb6c0743-66b6-4309-b2c3-09c1e06282be",
+            "type": "choice",
+            "prompt_text": "Consider `def add(item, bucket=[]): bucket.append(item); return bucket`, called three times in a row as `add(1)`, `add(2)`, `add(3)`. What does the third call return?",
+            "options": "[{\"id\":\"a\",\"label\":\"[3]\"},{\"id\":\"b\",\"label\":\"[1, 2, 3]\"},{\"id\":\"c\",\"label\":\"TypeError, since mutable defaults are rejected at definition time\"}]",
+            "text": "a",
+            "confidence": "high",
+            "skipped": 0,
+            "hinted": 0,
+            "was_correct": 0,
+            "correct_option": "b"
+          }
+        ],
+        "answers": [
+          {
+            "id": "f8f9371d-ca15-417f-bc4b-36a9899ed98f",
+            "exchange_id": "cb6c0743-66b6-4309-b2c3-09c1e06282be",
+            "gist": "Default arguments are evaluated exactly once, when the `def` statement runs, so the third call returns `[1, 2, 3]`.",
+            "core": "When Python executes a `def` statement, it evaluates each default expression right then and stores the resulting objects in a tuple on the function object (`add.__defaults__`). Calling the function does not re-run those expressions; it just binds the stored object to the parameter name when no argument is supplied. Because `[]` produced one list object at definition time, every default-using call gets a reference to that one list. `append` mutates it in place, so the mutation persists into the next call.",
+            "full": "## Watching it happen\n\n```python\ndef add(item, bucket=[]):\n    bucket.append(item)\n    return bucket\n\nadd(1)          # [1]\nadd(2)          # [1, 2]\nadd(3)          # [1, 2, 3]\n\nadd.__defaults__   # ([1, 2, 3],)  -- the same object, mutated\n```\n\nThe default is not hidden state in some special place. It's an ordinary attribute you can read and even reassign.\n\n## Why immutable defaults look like they work\n\n| Default | Evaluated | Shared across calls? | Visible problem? |\n|---|---|---|---|\n| `x=0` | once | yes | no — `x = x + 1` rebinds a local name, doesn't mutate `0` |\n| `s=\"hi\"` | once | yes | no — strings are immutable |\n| `b=[]` | once | yes | yes — `append` mutates the shared object |\n| `d={}` | once | yes | yes — `d[k] = v` mutates the shared object |\n\nThe rule is uniform; only mutation makes the sharing observable. That's why \"defaults are per-call\" survives as a belief for so long — most defaults are immutable.\n\n## The standard fix\n\n```python\ndef add(item, bucket=None):\n    if bucket is None:\n        bucket = []\n    bucket.append(item)\n    return bucket\n```\n\n`None` is the sentinel, and the `[]` now lives in the body, so it runs once per call.\n\n## Other things that follow from \"once, at def time\"\n\n- **Time is frozen too.** `def log(msg, when=datetime.now()):` stamps every call with the moment the module was imported, not the moment of the call.\n- **Names are captured by value at def time.** `def f(x=LIMIT):` reads whatever `LIMIT` was when `def` executed; later reassigning `LIMIT` does not change the default.\n- **Decorators and closures don't help.** The default belongs to the function object, and a function defined once inside another function still has one default per *function object created* — a factory that re-runs `def` does get a fresh list each time.\n- **Type annotations don't change it.** `bucket: list = []` behaves identically; annotations are not enforced.\n\nLinters flag this: Ruff `B006`, pylint `dangerous-default-value`.\n\n## The deliberate use\n\nBecause the binding happens once, defaults are sometimes used on purpose as a cheap per-call cache or as a fast local alias:\n\n```python\ndef f(x, _cache={}):\n    if x not in _cache:\n        _cache[x] = expensive(x)\n    return _cache[x]\n```\n\nThis works, and you'll see it in older code, but `functools.lru_cache` says the same thing without hiding state in a signature.",
+            "delta_held_up": "You correctly ruled out option (c) — Python does not inspect defaults for mutability, and there is no definition-time error. You also read the function body right: each call appends exactly one item.",
+            "delta_off": "The belief driving `[3]` is that `bucket=[]` is an instruction that runs when the function is called — a fresh list per invocation. It isn't. It's an expression evaluated once, at `def` time, and the resulting object is stored on the function and reused. So `bucket` is the *same* list every call, and the appends accumulate. Where this bites: a cache, config dict, or accumulator passed as a default silently leaks state between unrelated callers, including across test cases in the same process."
+          }
+        ],
+        "teach_turns": [],
+        "quiz": [
+          {
+            "id": "9c7a50b6-20b5-4b1c-9f35-974aaf6889f7",
+            "exchange_id": "cb6c0743-66b6-4309-b2c3-09c1e06282be",
+            "idx": 0,
+            "kind": "transfer",
+            "question": "A module defines `def make_adder(): return lambda item, bucket=[]: bucket + [item]` and you call `make_adder()` three times, appending nothing but instead doing `bucket.append(item)` inside each returned lambda — do the three lambdas share one bucket or get one each, and why?",
+            "user_answer": "It would share the same list across calls, so appending in one call shows up in the next.",
+            "feedback": "Your answer treats the default as belonging to the code text, so any lambda written with `[]` shares one list. The default is stored on the function object, and each call to `make_adder()` re-evaluates the lambda expression and thus the `[]`, so the three lambdas get three separate buckets.",
+            "was_correct": 0
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "thread": {
+      "id": "dfd17176-d9ed-44b6-a1f9-357ece5382db",
+      "title": "Why does adding an index sometimes make a query slower?",
+      "created_at": 1788649800122
+    },
+    "note": "Same question · mostly prose",
+    "exchanges": [
+      {
+        "exchange": {
+          "id": "3df6d3e2-6333-43da-8257-f43134c48fbe",
+          "thread_id": "dfd17176-d9ed-44b6-a1f9-357ece5382db",
+          "mode": "learn",
+          "question": "Why does adding an index sometimes make a query slower?",
+          "triage_result": "learnable",
+          "state": "done",
+          "created_at": 1788649800125,
+          "context_exchange_id": null
+        },
+        "predictions": [
+          {
+            "id": "58de5c2f-1db9-4751-8b7f-aff6999702a1",
+            "exchange_id": "3df6d3e2-6333-43da-8257-f43134c48fbe",
+            "type": "choice",
+            "prompt_text": "Consider a SELECT that matches about 40% of the rows in a large table, on a column that now has a B-tree index. What is the most likely reason using the index makes this query slower than a plain full scan?",
+            "options": "[{\"id\":\"a\",\"label\":\"The index must be fully rebuilt before each read, and that rebuild cost is charged to the query\"},{\"id\":\"b\",\"label\":\"Each matching index entry sends the engine to a separate row location, turning one sequential pass into a huge number of scattered fetches\"},{\"id\":\"c\",\"label\":\"The index is larger than the table itself, so scanning the index reads more bytes than scanning the rows\"}]",
+            "text": null,
+            "confidence": null,
+            "skipped": 1,
+            "hinted": 0,
+            "was_correct": null,
+            "correct_option": "b"
+          }
+        ],
+        "answers": [
+          {
+            "id": "f3f48701-f23d-4b28-8ea0-ed0cd52c95ea",
+            "exchange_id": "3df6d3e2-6333-43da-8257-f43134c48fbe",
+            "gist": "An index lookup returns row *pointers*, so matching 40% of a large table turns one smooth sequential read into millions of scattered random fetches, which is far more expensive per row than just reading everything in order.",
+            "core": "A B-tree index doesn't store the rows; it stores the indexed values in sorted order, each paired with a pointer to where the actual row lives on disk. To return anything other than the indexed column, the engine must follow each pointer to the real row — a step usually called a bookmark lookup or heap fetch. Those rows sit in whatever order they were written, so following pointers in index order means jumping around the storage almost at random. A full table scan, by contrast, reads pages front to back in large sequential chunks, which storage hardware and read-ahead prefetching are heavily optimized for. Below some selectivity threshold the index wins because you skip most of the table; above it, you end up reading nearly every page anyway, but in the worst possible order and with the index traversal layered on top.",
+            "full": "## The threshold is lower than people expect\n\nThe crossover point where a full scan beats an index is often somewhere around 5–20% of rows, not 50%. The reason is that pages, not rows, are the unit of I/O. If a table has 100 rows per page and you match 10% of rows scattered evenly, you will touch nearly every page in the table — you have gained nothing on I/O volume and paid for the index traversal plus random access ordering. This is why query planners maintain statistics (histograms of column values) and estimate selectivity before choosing a plan. A planner that skips the index at 40% is usually making the right call.\n\n## Why the other two explanations don't hold\n\nIndexes are maintained incrementally on every INSERT, UPDATE, and DELETE — never rebuilt at read time. That maintenance cost is real, and it is a genuine reason an index can slow a *system* down, but it is charged to writes, not to the SELECT. And while an index does consume storage, a single-column B-tree stores one column plus a pointer, so it is virtually always much smaller than the table it indexes. Size is not what makes the plan lose.\n\n## The clustering caveat\n\nRandom access hurts because index order and physical row order disagree. When they agree, the penalty largely vanishes:\n\n- A **clustered index** (SQL Server) or **index-organized table** (Oracle) stores the rows themselves in index order, so a range scan is sequential.\n- PostgreSQL tracks a **correlation** statistic per column measuring how closely physical order matches logical order. A column that happens to be written in sorted order — a timestamp on an append-only log — scores near 1.0, and the planner will happily use the index for large ranges because the fetches turn out to be near-sequential anyway.\n- A **covering index**, one that includes every column the query needs, removes the heap fetch entirely. The engine answers from the index alone. This is what PostgreSQL calls an index-only scan and what `INCLUDE` columns exist for.\n\n## Other ways an index makes things slower\n\nBeyond the selectivity story, an index can hurt when:\n\n- **Writes dominate.** Every index multiplies the work of an INSERT or UPDATE, and adds lock and WAL/log traffic.\n- **Statistics are stale.** The planner believes a predicate matches 200 rows, picks a nested loop with index lookups, and the predicate actually matches two million.\n- **The index is not usable but is still considered.** Wrapping the column in a function, or a leading-wildcard `LIKE '%foo'`, can force a full index scan that reads the whole index and then still fetches rows.\n- **Cache pressure.** Index pages compete with data pages for buffer memory. A rarely-useful index that gets scanned occasionally can evict hot data.\n\n## Seeing it yourself\n\nIn PostgreSQL, `EXPLAIN (ANALYZE, BUFFERS) SELECT ...` shows the chosen plan and actual timings. You can force the comparison with `SET enable_indexscan = off;` and re-run to see what the alternative would have cost. The `Buffers: shared hit/read` lines make the page-count argument concrete — often the index plan reads *more* pages than the seq scan, not fewer.",
+            "delta_held_up": null,
+            "delta_off": null
+          }
+        ],
+        "teach_turns": [],
+        "quiz": []
+      }
+    ]
+  },
+  {
+    "thread": {
+      "id": "e6f02b5a-eb8c-44d8-ad41-f83f8b2c5d55",
+      "title": "Why does adding an index sometimes make a query slower?",
+      "created_at": 1788649829726
+    },
+    "note": "Same question · mostly tables & diagrams",
+    "exchanges": [
+      {
+        "exchange": {
+          "id": "82cf0d21-febc-4642-8ac4-7f843d446d0c",
+          "thread_id": "e6f02b5a-eb8c-44d8-ad41-f83f8b2c5d55",
+          "mode": "learn",
+          "question": "Why does adding an index sometimes make a query slower?",
+          "triage_result": "learnable",
+          "state": "done",
+          "created_at": 1788649829730,
+          "context_exchange_id": null
+        },
+        "predictions": [
+          {
+            "id": "5139d6a1-b81c-4df9-b825-90893d87febf",
+            "exchange_id": "82cf0d21-febc-4642-8ac4-7f843d446d0c",
+            "type": "choice",
+            "prompt_text": "You add an index on a column and a SELECT that filters on that column gets slower. What is the most likely reason the planner's indexed path costs more than the plain table scan?",
+            "options": "[{\"id\":\"a\",\"label\":\"The filter matches a large fraction of rows, so the index forces many scattered row lookups instead of one sequential pass\"},{\"id\":\"b\",\"label\":\"The index has to be fully rebuilt on the first read after creation, and that cost is charged to the query\"},{\"id\":\"c\",\"label\":\"The index is stored separately, so every query now reads both the index and the table, doubling total I/O\"}]",
+            "text": null,
+            "confidence": null,
+            "skipped": 1,
+            "hinted": 0,
+            "was_correct": null,
+            "correct_option": "a"
+          }
+        ],
+        "answers": [
+          {
+            "id": "2bab0efc-7976-4779-8519-8544ba7eb1b5",
+            "exchange_id": "82cf0d21-febc-4642-8ac4-7f843d446d0c",
+            "gist": "When a filter matches a large share of the table, the index turns one fast sequential pass into thousands of scattered random lookups, which costs more than just reading everything.",
+            "core": "An index doesn't hand you rows — it hands you *pointers* to rows, which the database must then fetch from the table itself. Each fetch is a jump to an arbitrary page on disk, and those jumps are individually expensive compared to reading pages in order. A sequential scan reads the whole table in physical order, which storage hardware and read-ahead are optimized for, so its per-row cost is very low. So the two plans trade off: index = few rows × high cost each; scan = many rows × low cost each. Past some selectivity threshold, \"few rows\" stops being few and the index path loses.",
+            "full": "## The two plans, side by side\n\n| | Index scan | Sequential scan |\n|---|---|---|\n| Reads | index pages, then one table page per match | every table page, in physical order |\n| Access pattern | random | sequential |\n| Cost per row | high (page jump, possibly a disk seek) | very low (read-ahead, batching) |\n| Wins when | filter matches a **small** fraction | filter matches a **large** fraction |\n| Typical crossover | ~5–15% of rows in Postgres-like planners | — |\n\n## What actually happens on a low-selectivity query\n\n```\n  SELECT * FROM users WHERE country = 'US';     -- 60% of rows\n\n  index path:\n    index ──▶ ptr ──▶ page 812   ┐\n    index ──▶ ptr ──▶ page 3     │  600,000 scattered\n    index ──▶ ptr ──▶ page 1197  │  jumps, many pages\n    index ──▶ ptr ──▶ page 44    │  visited repeatedly\n    ...                          ┘\n\n  seq scan path:\n    page 1 ▸ 2 ▸ 3 ▸ 4 ▸ 5 ▸ ... ▸ 10000   one ordered sweep\n```\n\nThe index path can touch the *same* table page many times, once per matching row, because rows with the same value are scattered across the file. The seq scan touches each page exactly once.\n\n## Why the other two options are wrong\n\n| Option | Why it fails |\n|---|---|\n| b — index rebuilt on first read | Indexes are built at `CREATE INDEX` time, not lazily on read. `CREATE INDEX` is slow; the first `SELECT` after it is not specially penalized. |\n| c — reads both index and table, doubling I/O | Directionally real (the double read exists) but wrong as the *cause*. If it were just 2× I/O, indexes would always be slower, which they obviously aren't. The cost isn't the extra read, it's that the extra read is **random** and repeated. |\n\n## The other real causes of \"index made things slower\"\n\nThe question asked about read-path costs, but the phrase \"adding an index made my query slower\" has three other common origins:\n\n- **Write amplification.** Every `INSERT`/`UPDATE`/`DELETE` must also update the index. On a write-heavy table, five indexes means five extra structures to maintain per write. This slows the *workload*, not the `SELECT`.\n- **Bad statistics.** The planner estimates selectivity from sampled stats. If the stats are stale, it may believe a filter matches 200 rows when it matches 2 million, and pick the index. `ANALYZE` fixes this class of problem, and it's the most common real-world version.\n- **Planner switched off a better plan.** Adding an index can change a join strategy — the planner now sees a nested-loop-with-index as viable and abandons a hash join that was actually faster.\n\n## The escape hatch: index-only scans\n\nIf the index contains *every* column the query needs, the database can skip the table entirely and answer from the index alone. That removes the random-fetch cost, so a covering index can beat a seq scan even at high selectivity.\n\n```sql\n-- not covering: must visit table for `name`\nCREATE INDEX ON users (country);\nSELECT name FROM users WHERE country = 'US';\n\n-- covering: answered from the index alone\nCREATE INDEX ON users (country) INCLUDE (name);\n```\n\n## How to see it yourself\n\n```sql\nEXPLAIN (ANALYZE, BUFFERS) SELECT * FROM users WHERE country = 'US';\n```\n\nCompare estimated `rows=` against actual `rows=`. A large gap means stale stats. To force the comparison, run it with `SET enable_seqscan = off;` and time both plans.",
+            "delta_held_up": null,
+            "delta_off": null
+          }
+        ],
+        "teach_turns": [],
+        "quiz": []
+      }
+    ]
+  },
+  {
+    "thread": {
+      "id": "f1b3ae7a-6782-43ec-a12c-8b84d249d449",
+      "title": "What's the flag to make rsync preserve symlinks?",
+      "created_at": 1788649859174
+    },
+    "note": "Triage bailed out — nothing here to predict",
+    "exchanges": [
+      {
+        "exchange": {
+          "id": "a53cd964-518a-4b96-b156-fb4894f74be6",
+          "thread_id": "f1b3ae7a-6782-43ec-a12c-8b84d249d449",
           "mode": "learn",
           "question": "What's the flag to make rsync preserve symlinks?",
           "triage_result": "lookup",
           "state": "done",
-          "created_at": 1788646487590,
+          "created_at": 1788649859177,
           "context_exchange_id": null
         },
         "predictions": [],
         "answers": [
           {
-            "id": "64fb381b-7337-413e-a3ed-5a6b00405a01",
-            "exchange_id": "5f892853-90cd-4658-b406-09f4fa302d72",
+            "id": "17ed99ac-eff6-4f21-b860-2af59107a840",
+            "exchange_id": "a53cd964-518a-4b96-b156-fb4894f74be6",
             "gist": null,
             "core": null,
-            "full": "`-l` (or `--links`) — copies symlinks as symlinks.\n\n| Flag | Effect |\n|---|---|\n| `-l` / `--links` | Recreate symlinks on the destination |\n| `-L` / `--copy-links` | Follow symlinks, transfer the file they point to |\n| `-a` / `--archive` | Implies `-l` (plus `-rptgoD`) |\n\n```\n  source: link -> target.txt\n\n  -l  →  dest: link -> target.txt   (symlink preserved)\n  -L  →  dest: link  (regular file, contents of target.txt)\n```\n\nMost of the time `-a` is what you want, since it already includes `-l`.",
+            "full": "`-l` (long form `--links`) — copies symlinks as symlinks rather than skipping them.\n\nIt's already included in `-a` (archive), so `rsync -a` covers it.\n\nRelated flags worth knowing:\n\n| Flag | Behavior |\n|---|---|\n| `-l` / `--links` | Recreate symlinks on the destination |\n| `-L` / `--copy-links` | Follow symlinks, copy the referent file instead |\n| `--copy-unsafe-links` | Follow only links pointing outside the transfer tree |\n| `--safe-links` | Ignore links pointing outside the transfer tree |\n| `-H` / `--hard-links` | Preserve hard links (not covered by `-a`) |",
             "delta_held_up": null,
             "delta_off": null
           }

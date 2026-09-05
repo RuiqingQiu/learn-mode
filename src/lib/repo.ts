@@ -94,12 +94,12 @@ export function saveQuizAnswer(
 export function createThread(title = "New thread"): ThreadSummary {
   const row = { id: newId(), title, created_at: now() };
   db().prepare("INSERT INTO threads (id, title, created_at) VALUES (@id, @title, @created_at)").run(row);
-  return { ...row, is_example: false };
+  return { ...row, is_example: false, example_note: null };
 }
 
 export function listThreads(): ThreadSummary[] {
   const rows = db()
-    .prepare("SELECT id, title, created_at, is_example FROM threads")
+    .prepare("SELECT id, title, created_at, is_example, example_note FROM threads")
     .all() as (Omit<ThreadSummary, "is_example"> & { is_example: number })[];
   const all = rows.map((r) => ({ ...r, is_example: !!r.is_example }));
   // Your own threads newest-first; the examples last, in the order they were
@@ -112,7 +112,7 @@ export function listThreads(): ThreadSummary[] {
 
 export function getThread(id: string): ThreadSummary | null {
   const r = db()
-    .prepare("SELECT id, title, created_at, is_example FROM threads WHERE id = ?")
+    .prepare("SELECT id, title, created_at, is_example, example_note FROM threads WHERE id = ?")
     .get(id) as (Omit<ThreadSummary, "is_example"> & { is_example: number }) | undefined;
   return r ? { ...r, is_example: !!r.is_example } : null;
 }

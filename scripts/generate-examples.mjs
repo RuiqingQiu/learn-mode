@@ -49,80 +49,140 @@ async function ask(threadId, question, mode) {
 
 const reveal = (exchangeId) => sse("/api/reveal", { exchangeId }, () => {});
 
-async function build() {
-  const ids = [];
-
-  // 1 — a wrong prediction, the full delta, then the whole protégé arc.
+/**
+ * Each scenario is generated under its own preferences, so the seeded examples
+ * actually demonstrate the settings rather than describing them. `pick` chooses
+ * which option to commit to — the point of most of these is a *wrong* guess,
+ * because that is when the delta has something to say. `freeText` is the fallback
+ * when the model chooses an open prediction instead of options, and `skip` is for
+ * the pair that exists only to compare formats: skipping means no delta, so the
+ * two answers differ in shape and nothing else.
+ */
+const SCENARIOS = [
   {
-    log("example 1: defer in a loop (wrong guess -> delta -> explain it back)");
-    const { thread } = await (await post("/api/threads", {})).json();
-    ids.push(thread.id);
-    const q = "Does a defer inside a for loop run at the end of each iteration, or at the end of the function?";
-    const { exchangeId, predictionId, prompt } = await ask(thread.id, q, "learn");
-    // Take the option that matches the common wrong belief, so the delta has work to do.
-    const wrong =
-      prompt.options?.find((o) => /iteration/i.test(o.label))?.id ?? prompt.options?.[0]?.id ?? "";
-    await post("/api/exchange", {
-      action: "submit_prediction", predictionId, text: wrong, confidence: "med",
-    });
-    await reveal(exchangeId);
-    await post("/api/exchange", { action: "start_teaching", exchangeId });
-
-    const replies = [
+    note: "Explain it back · mostly tables & diagrams",
+    prefs: { reinforcement: "teach_back", density: "visual" },
+    question:
+      "Does a defer inside a for loop run at the end of each iteration, or at the end of the function?",
+    pick: /iteration/i,
+    confidence: "med",
+    teach: [
       "They run at the end of the function, not per iteration. The loop body isn't a function so it doesn't trigger them.",
       "Because defer attaches to the function's call frame. A for loop doesn't create a frame, only a function call does.",
       "You'd move the body into its own function — or an immediately-invoked closure — so each iteration has a frame to attach to.",
       "It evaluates the arguments at the moment the defer statement runs, so each one captures its own file handle. Only the timing is wrong.",
-    ];
-    await sse("/api/teach", { exchangeId }, () => {});
-    for (const userMsg of replies) await sse("/api/teach", { exchangeId, userMsg }, () => {});
-  }
-
-  // 2 — a broad topic narrowed to one concept, a correct guess, then a quiz.
+    ],
+  },
   {
-    log("example 2: broad topic narrowed, correct guess -> quiz");
+    note: "Quiz me afterwards · mostly tables & diagrams",
+    prefs: { reinforcement: "quiz", density: "visual" },
+    question: "I want to learn about cassandra db",
+    pick: /reject|refus|allow filtering|error/i,
+    confidence: "high",
+    quiz: {
+      kind: "recall",
+      answers: [
+        "Because the partition key is hashed to pick the node, so without it there's no way to know which node holds the row.",
+        "I don't know",
+        "You make a second table keyed by the column you want to query, and write to both.",
+      ],
+    },
+  },
+  {
+    note: "One transfer question · balanced",
+    prefs: { reinforcement: "transfer_probe", density: "balanced" },
+    question: "Is a Python default argument evaluated once, or once per call?",
+    pick: /per call|each call|every call/i,
+    freeText: "Once per call — the default expression gets re-evaluated every time you call the function.",
+    confidence: "high",
+    quiz: {
+      kind: "transfer",
+      answers: [
+        "It would share the same list across calls, so appending in one call shows up in the next.",
+      ],
+    },
+  },
+  {
+    note: "Same question · mostly prose",
+    prefs: { reinforcement: "teach_back", density: "prose" },
+    question: "Why does adding an index sometimes make a query slower?",
+    skip: true,
+  },
+  {
+    note: "Same question · mostly tables & diagrams",
+    prefs: { reinforcement: "teach_back", density: "visual" },
+    question: "Why does adding an index sometimes make a query slower?",
+    skip: true,
+  },
+  {
+    note: "Triage bailed out — nothing here to predict",
+    prefs: { reinforcement: "teach_back", density: "balanced" },
+    question: "What's the flag to make rsync preserve symlinks?",
+    expectLookup: true,
+  },
+];
+
+async function build() {
+  const made = [];
+
+  for (const sc of SCENARIOS) {
+    log(`${sc.note}  —  ${sc.question.slice(0, 48)}`);
+    await post("/api/preferences", sc.prefs);
+
     const { thread } = await (await post("/api/threads", {})).json();
-    ids.push(thread.id);
-    const { exchangeId, predictionId, prompt } = await ask(
-      thread.id, "I want to learn about cassandra db", "learn",
-    );
-    const right =
-      prompt.options?.find((o) => /reject|refus|allow filtering|error/i.test(o.label))?.id ??
-      prompt.options?.[0]?.id ?? "";
-    await post("/api/exchange", {
-      action: "submit_prediction", predictionId, text: right, confidence: "high",
-    });
+    const { exchangeId, predictionId, prompt, triage } = await ask(thread.id, sc.question, "learn");
+
+    if (sc.expectLookup) {
+      if (triage !== "lookup") console.warn("   ! triage returned", triage, "— this example will not show the lookup path");
+      made.push({ id: thread.id, note: sc.note });
+      continue;
+    }
+    if (!predictionId) throw new Error(`no prediction for: ${sc.question}`);
+
+    if (sc.skip) {
+      await post("/api/exchange", { action: "skip_prediction", predictionId });
+    } else {
+      const chosen = prompt.options?.length
+        ? ((sc.pick && prompt.options.find((o) => sc.pick.test(o.label))?.id) ?? prompt.options[0].id)
+        : sc.freeText;
+      if (!chosen) throw new Error(`no answer to commit for: ${sc.question}`);
+      await post("/api/exchange", {
+        action: "submit_prediction", predictionId, text: chosen, confidence: sc.confidence ?? "med",
+      });
+    }
     await reveal(exchangeId);
 
-    const { questions } = await (await post("/api/quiz", { action: "start", exchangeId, kind: "recall" })).json();
-    const answers = [
-      "Because the partition key is hashed to pick the node, so without it there's no way to know which node holds the row.",
-      "I don't know",
-      "You make a second table keyed by the column you want to query, and write to both.",
-    ];
-    for (const [i, q] of (questions ?? []).entries()) {
-      await post("/api/quiz", { action: "answer", exchangeId, questionId: q.id, text: answers[i] ?? "not sure" });
+    if (sc.teach) {
+      await post("/api/exchange", { action: "start_teaching", exchangeId });
+      await sse("/api/teach", { exchangeId }, () => {});
+      for (const userMsg of sc.teach) await sse("/api/teach", { exchangeId, userMsg }, () => {});
     }
+
+    if (sc.quiz) {
+      const { questions } = await (
+        await post("/api/quiz", { action: "start", exchangeId, kind: sc.quiz.kind })
+      ).json();
+      for (const [i, q] of (questions ?? []).entries()) {
+        await post("/api/quiz", {
+          action: "answer", exchangeId, questionId: q.id, text: sc.quiz.answers[i] ?? "not sure",
+        });
+      }
+    }
+
+    made.push({ id: thread.id, note: sc.note });
   }
 
-  // 3 — Learn mode on, but triage says this one has nothing to predict.
-  {
-    log("example 3: learn mode on a pure lookup -> straight answer");
-    const { thread } = await (await post("/api/threads", {})).json();
-    ids.push(thread.id);
-    const { triage } = await ask(thread.id, "What's the flag to make rsync preserve symlinks?", "learn");
-    if (triage !== "lookup") console.warn("   ! triage returned", triage, "— example 3 will not show the lookup path");
-  }
-
-  return ids;
+  // Leave the scratch DB without preferences, so a fresh boot shows the setup step.
+  await fetch(B + "/api/preferences", { method: "DELETE" });
+  return made;
 }
 
-const threadIds = await build();
+const made = await build();
 
 // Dump exactly what the pipeline produced.
 const db = new Database(process.env.LEARN_DB_PATH ?? "./data/learn.db", { readonly: true });
 const pick = (sql, ...a) => db.prepare(sql).all(...a);
-const payload = threadIds.map((tid) => {
+const payload = made.map(({ id: tid, note }) => {
   const thread = db.prepare("SELECT id, title, created_at FROM threads WHERE id = ?").get(tid);
   const exchanges = pick("SELECT * FROM exchanges WHERE thread_id = ? ORDER BY created_at", tid).map((e) => ({
     exchange: e,
@@ -131,7 +191,7 @@ const payload = threadIds.map((tid) => {
     teach_turns: pick("SELECT * FROM teach_turns WHERE exchange_id = ? ORDER BY idx", e.id),
     quiz: pick("SELECT * FROM quiz_questions WHERE exchange_id = ? ORDER BY idx", e.id),
   }));
-  return { thread, exchanges };
+  return { thread, note, exchanges };
 });
 
 const out = `// GENERATED by scripts/generate-examples.mjs — do not edit by hand.
@@ -142,6 +202,8 @@ const out = `// GENERATED by scripts/generate-examples.mjs — do not edit by ha
 
 export interface SeedThread {
   thread: { id: string; title: string; created_at: number };
+  /** Which preference combination this example demonstrates. */
+  note: string;
   exchanges: {
     exchange: Record<string, unknown>;
     predictions: Record<string, unknown>[];

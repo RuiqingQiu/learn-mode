@@ -356,6 +356,8 @@ export default function Chat({ ephemeral = false }: { ephemeral?: boolean }) {
 
   // ── render ────────────────────────────────────────────────────────────────
 
+  const currentThread = threads.find((t) => t.id === threadId);
+
   // A session that is still open but no longer the last exchange floats to the end.
   const live = exchanges.find((e) => e.teach.turns.length > 0 && !e.teach.closed);
   const floated = live && exchanges[exchanges.length - 1]?.key !== live.key ? live : null;
@@ -441,13 +443,18 @@ export default function Chat({ ephemeral = false }: { ephemeral?: boolean }) {
                     key={t.id}
                     type="button"
                     onClick={() => openThread(t.id)}
-                    className={`block w-full truncate rounded-md px-2 py-1.5 text-left text-[13px] italic transition ${
+                    className={`block w-full rounded-md px-2 py-1.5 text-left transition ${
                       t.id === threadId
                         ? "bg-stone-200/80 text-stone-900"
                         : "text-stone-500 hover:bg-stone-200/50"
                     }`}
                   >
-                    {t.title}
+                    <span className="block truncate text-[13px] italic">{t.title}</span>
+                    {t.example_note && (
+                      <span className="mt-0.5 block truncate text-[10.5px] text-stone-400">
+                        {t.example_note}
+                      </span>
+                    )}
                   </button>
                 ))}
             </div>
@@ -468,6 +475,19 @@ export default function Chat({ ephemeral = false }: { ephemeral?: boolean }) {
       <main className="flex min-w-0 flex-1 flex-col">
         <div className="flex-1 overflow-y-auto px-6">
           <div className="mx-auto max-w-3xl">
+            {/* Viewing an example must not read as your own history, and must not
+                imply your settings changed. */}
+            {currentThread?.is_example && (
+              <div className="mt-6 rounded-lg border border-stone-300 bg-stone-100/70 px-4 py-3">
+                <p className="text-[13px] leading-[1.55] text-stone-600">
+                  <span className="font-medium text-stone-800">Example.</span>{" "}
+                  {currentThread.example_note
+                    ? `This one was produced with “${currentThread.example_note}”.`
+                    : "A worked example."}{" "}
+                  Real output, not a mock-up — your own preferences are unchanged.
+                </p>
+              </div>
+            )}
             {exchanges.length === 0 && (
               <div className="pt-32 pb-8">
                 <p className="text-[15px] text-stone-500">
