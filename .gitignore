@@ -1,0 +1,10 @@
+node_modules
+.next
+# SQLite plus its -wal/-shm sidecars, which hold real data
+data/
+.env
+.env.local
+next-env.d.ts
+*.tsbuildinfo
+tsconfig.tsbuildinfo
+*.png
