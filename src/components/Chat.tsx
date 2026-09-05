@@ -515,6 +515,7 @@ export default function Chat({ ephemeral = false }: { ephemeral?: boolean }) {
                 onQuizAnswer={(qid: string, text: string) => void answerQuiz(ex.key, ex.id, qid, text)}
                 onQuizDismiss={() => patch(ex.key, (e) => ({ ...e, quizDismissed: true }))}
                 quizKind={(prefs ?? DEFAULT_PREFERENCES).reinforcement === "transfer_probe" ? "transfer" : "recall"}
+                expandFull={!!currentThread?.is_example}
                 renderTeach={!floated || floated.key !== ex.key}
               />
             ))}

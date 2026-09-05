@@ -148,7 +148,7 @@ not derive "dismissed" from "all answered", or reloading loses the transcript.
 
 ### 6. Examples are real captured output, not hand-written imitations
 
-A fresh install seeds six worked examples (`src/lib/examples.ts`, seeded by
+A fresh install seeds seven worked examples (`src/lib/examples.ts`, seeded by
 `seedExamples()` in `db.ts` with fixed ids, so it is idempotent). Each was
 generated **under its own preferences** and carries an `example_note` naming the
 combination, so they demonstrate the settings rather than describing them:
@@ -160,6 +160,7 @@ combination, so they demonstrate the settings rather than describing them:
 | Python default arguments | `transfer_probe` + `balanced` |
 | "why does an index slow a query" | `prose` — the prediction is **skipped** |
 | the same question again | `visual` — also skipped |
+| git merge vs rebase | `visual` — a question that is genuinely a graph |
 | rsync flag | Learn mode where triage bails out |
 
 The last two exist only to compare formats, which is why both skip the
@@ -169,6 +170,11 @@ picks up a delta, the comparison is no longer clean.
 
 Viewing an example shows a banner saying so and that preferences are unchanged —
 browsing must never look like it altered your settings.
+
+Examples also open `full` on load (`defaultFullOpen`). §4.3 collapses it for
+normal use and that stays, but every table and diagram the density setting
+produces lives in `full` — collapsed, an example demonstrates nothing and the
+setting looks like it does nothing.
 
 They were produced by running the real pipeline — `npm run gen:examples`
 regenerates all of them (needs `npm run dev` and about $1). It sets the

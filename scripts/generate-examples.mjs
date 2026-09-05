@@ -115,6 +115,15 @@ const SCENARIOS = [
     skip: true,
   },
   {
+    // Commit history is a graph, so this is where ASCII diagrams earn their place
+    // rather than a table being dressed up as one.
+    note: "A question that is genuinely a diagram · mostly tables & diagrams",
+    prefs: { reinforcement: "teach_back", density: "visual" },
+    question: "What is the difference between git merge and git rebase, in terms of what the commit graph ends up looking like?",
+    freeText: "Merge keeps both branches and adds a commit joining them; rebase moves my commits on top of the other branch so it looks linear.",
+    confidence: "med",
+  },
+  {
     note: "Triage bailed out — nothing here to predict",
     prefs: { reinforcement: "teach_back", density: "balanced" },
     question: "What's the flag to make rsync preserve symlinks?",

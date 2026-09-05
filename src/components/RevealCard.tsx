@@ -22,6 +22,7 @@ export default function RevealCard({
   streaming,
   showDelta,
   canExplainBack,
+  defaultFullOpen = false,
   onExplainBack,
 }: {
   sections: Partial<Record<SectionName, string>>;
@@ -29,10 +30,13 @@ export default function RevealCard({
   /** §4.3 — the delta is skipped entirely when the user skipped the prediction. */
   showDelta: boolean;
   canExplainBack: boolean;
+  /** Examples open it: the tables and diagrams are the thing being demonstrated,
+   *  and they all live in `full`. */
+  defaultFullOpen?: boolean;
   onExplainBack: () => void;
 }) {
   const [coreOpen, setCoreOpen] = useState(true);
-  const [fullOpen, setFullOpen] = useState(false);
+  const [fullOpen, setFullOpen] = useState(defaultFullOpen);
 
   const gist = sections.gist?.trim();
   const heldUp = sections.held_up?.trim();

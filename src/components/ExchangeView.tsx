@@ -25,6 +25,7 @@ export default function ExchangeView({
   onClearTeaching,
   renderTeach,
   quizKind,
+  expandFull,
   onQuizAnswer,
   onQuizDismiss,
 }: {
@@ -42,6 +43,8 @@ export default function ExchangeView({
   /** False while this session is floated to the end of the thread instead. */
   renderTeach: boolean;
   quizKind: QuizKind;
+  /** Open the full answer on load — used for the seeded examples. */
+  expandFull: boolean;
   onQuizAnswer: (questionId: string, text: string) => void;
   onQuizDismiss: () => void;
 }) {
@@ -136,6 +139,7 @@ export default function ExchangeView({
           sections={ex.sections}
           streaming={ex.revealStreaming}
           showDelta={!ex.submitted?.skipped}
+          defaultFullOpen={expandFull}
           canExplainBack={
             // Available as soon as `full` starts arriving — that is the point the
             // server has persisted the answer, and gist/delta/core are complete.

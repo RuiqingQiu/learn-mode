@@ -34,7 +34,7 @@ Committing a guess isn't configurable. It's the part carrying the weight.
 control, which clears your settings and brings the setup screen back. Useful for
 demoing.
 
-**Examples** — a fresh install seeds six worked examples in the sidebar, each
+**Examples** — a fresh install seeds seven worked examples in the sidebar, each
 labelled with the preference combination that produced it, so you can see what
 the settings actually do before choosing:
 
@@ -45,6 +45,8 @@ the settings actually do before choosing:
 - *One transfer question · balanced*
 - *Same question · mostly prose* and *· mostly tables & diagrams* — the identical
   question at both extremes, side by side
+- *A question that is genuinely a diagram* — git merge vs rebase, where the answer
+  is commit graphs rather than paragraphs
 - *Triage bailed out* — Learn mode on a pure lookup
 
 They're real captured output, not mock-ups. `npm run gen:examples` regenerates
