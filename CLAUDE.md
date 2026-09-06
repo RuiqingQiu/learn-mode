@@ -487,6 +487,27 @@ Vercel, as a demo with **no persistence and no auth** — both chosen knowingly.
   a warm lambda behaves normally and everything vanishes when it recycles. The
   sidebar renders a notice (`EPHEMERAL_STORAGE` in `src/lib/env.ts`) so it does
   not read as a bug. Do not delete that notice without also fixing storage.
+- **No page may read `repo` during its server render.** Route handlers and page
+  renders are separate serverless functions with separate `/tmp`, so a page that
+  queries SQLite directly reads a *different* database than the one the API
+  routes write. This was a bug first, and a total one: `POST /api/sessions` wrote
+  the row into the API function's file, the session page looked for it in its
+  own, found nothing, and called `notFound()` — `/learn/<course>/session/<id>`
+  404'd on **every** load in production, 12 of 12 in a row, while
+  `GET /api/sessions/<id>` returned the same row happily. The course, notes and
+  explore pages had it too, more quietly: they degraded to *not started* and
+  *"Nothing yet"* over data that demonstrably existed.
+
+  So the four `/learn` pages are thin server shells that await `params` and hand
+  off to a client component, which fetches through `src/lib/client.ts` via
+  `useLoader` (`src/lib/use-loader.ts`). Keep it that way — a `repo` import in a
+  `page.tsx` is the regression. Two consequences to accept: a missing session now
+  answers 200 with a readable message rather than an HTTP 404, and React
+  StrictMode double-fetches in dev.
+
+  This narrows the failure to the documented ephemerality (a cold start loses
+  data) instead of a guaranteed break. It is not durable storage, and the
+  Deploying section of README.md still names what to move to.
 - `next.config.ts` has `outputFileTracingIncludes` for `./prompts/**` and
   `./courses/**` — nothing imports those files, so tracing would drop them, every
   model call would fail at runtime and the course list would come back empty. If

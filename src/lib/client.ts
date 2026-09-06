@@ -133,7 +133,8 @@ export const api = {
     post<{ questions: QuizQuestion[] }>("/api/quiz", { action: "answer", exchangeId, questionId, text }),
 
   // ── courses ───────────────────────────────────────────────────────────────
-  listCourses: () => json<{ courses: (CourseRecord & { enrolled: boolean })[] }>("/api/courses"),
+  listCourses: () =>
+    json<{ courses: (CourseRecord & { enrolled: boolean; completed: number })[] }>("/api/courses"),
   publishCourse: (source: string) =>
     post<{ course: CourseRecord; errors?: string[] }>("/api/courses", { source }),
   getCourse: (id: string) =>

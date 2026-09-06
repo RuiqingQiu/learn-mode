@@ -13,9 +13,17 @@ export async function GET(req: Request) {
       subject: url.searchParams.get("subject") ?? undefined,
       level: url.searchParams.get("level") ?? undefined,
     });
-    // Enrollment state is what the explore page sorts on.
+    // Enrollment state is what the explore page sorts on; `completed` is its ring.
     return NextResponse.json({
-      courses: courses.map((c) => ({ ...c, enrolled: !!repo.getEnrollment(c.id) })),
+      courses: courses.map((c) => {
+        const enrollment = repo.getEnrollment(c.id);
+        const progress = enrollment ? repo.topicProgress(enrollment.id) : [];
+        return {
+          ...c,
+          enrolled: !!enrollment,
+          completed: progress.filter((p) => p.status === "completed").length,
+        };
+      }),
     });
   } catch (err) {
     return NextResponse.json({ error: errorMessage(err) }, { status: 500 });
