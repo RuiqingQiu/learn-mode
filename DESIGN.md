@@ -261,9 +261,6 @@ advance, or a dashboard will kill it.
 
 - **The calibration view.** The data is collected on every prediction and nothing
   reads it. The most interesting long-term artifact here, and not built.
-- **`user-ahead` has never fired.** The diff can mark a row where you saw
-  something Claude missed; in every run the model has correctly declined to invent
-  one. Honest — but the "colleague" has never yet conceded a point.
 - **Deployment is a demo, not a service.** Storage on Vercel is per-instance and
   wiped on cold start, there is no auth, and concurrent visitors share state. Run
   it locally for anything you want to keep.
