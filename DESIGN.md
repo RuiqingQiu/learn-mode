@@ -1,6 +1,13 @@
 # Learn Mode — design rationale
 
-**Prototype:** [deployed link] · **Code:** this repo · **Video:** [link]
+**Prototype:** https://learning-ebon-kappa.vercel.app ·
+**Code:** https://github.com/RuiqingQiu/learn-mode ·
+**Video:** [link]
+
+Next.js (App Router) and TypeScript on the Anthropic API, with SQLite for
+bookkeeping. `claude-opus-5` runs the surfaces where prompt quality decides
+whether the product works — the reveal, the Shadow solver and diff, the protégé,
+the course tutor — and `claude-haiku-4-5` runs triage and concept tagging.
 
 ---
 
@@ -183,27 +190,39 @@ it, nothing else matters.
 
 The product is mostly **prompt assets, not code**. Every model call lives in one
 file, prompts are hand-edited markdown read fresh from disk, and the layered
-output is a single XML contract. Adding a subject means writing a file — the same
-reason an educator publishes without a deploy.
+output is a single XML contract. Adding a subject means writing a file.
 
-**Different users need different entry points**, and the design already carries
-that: three courses ship at beginner, intermediate and advanced levels by three
-authors, Learn is tuned for someone who does not yet have a working model of a
-concept, and Shadow assumes you do and compares it against Claude's. The mode
-toggle is what lets one product serve both without having to guess which you are.
+**Different users need different entry points**, and the design carries that:
+three courses ship at beginner, intermediate and advanced levels by three authors;
+Learn is tuned for someone without a working model of a concept, Shadow assumes
+you have one. The mode toggle lets one product serve both without guessing which
+you are.
 
-Cost is shaped deliberately: all four layers of a reveal come from **one** call
-rather than three, triage runs on a cheap model on the critical path, and concept
-tagging is fire-and-forget off it.
+**Cost is linear in exchanges, not in session length**, which is the property that
+matters at a million users. Nothing fans out: there is no retrieval step and no
+per-message chain. A Learn exchange is one Haiku classification plus one Opus
+generation — all four layers of the reveal come from a single call rather than
+three — with concept tagging fired off the critical path. A Shadow exchange is two
+Opus generations and a short grade. A course turn is one call, and the number of
+turns is bounded by an authored question budget rather than open-ended chat. The
+prompt files ship as cached system blocks, so the fixed part of every request is
+cached and only the variable content is fresh.
 
-The compounding asset is the calibration data — more valuable per user over time,
-free to collect, and eventually what lets the system drop scaffolding where
-someone is consistently right, solving expertise detection without a test.
+The obvious lever — run Shadow's solver on a cheaper model — is the one I would
+*not* pull. Fixture 2 showed the diff is only as calibrated as the solution it
+compares against, so degrading the solver silently degrades the thing the user
+actually reads. Latency splits the same way: twenty seconds is fine in Shadow,
+where you are meant to be typing through it, and unacceptable in triage, which is
+why triage is the one thing on the critical path and why it runs on Haiku.
 
-What has to change is conventional: this is single-user by construction (SQLite,
+The compounding asset is the calibration data: free to collect, more valuable per
+user over time, and eventually what lets the system drop scaffolding where someone
+is consistently right — expertise detection without a test.
+
+What has to change is conventional. This is single-user by construction (SQLite,
 no auth, one enrollment per course), so multi-tenancy means identity, ownership
-and a hosted database. The part usually hardest to retrofit is already done — see
-the data-not-instruction boundary above.
+and a hosted database. The part usually hardest to retrofit — keeping authored
+content from acting as instructions — is already done.
 
 ## Adoption
 
