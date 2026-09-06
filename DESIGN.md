@@ -20,99 +20,122 @@ The mechanism I designed against:
 > Reading a fluent explanation produces the *feeling* of understanding without the
 > encoding.
 
-That is the illusion of explanatory depth, and it has been measured for decades.
-What is new is that model output is maximally fluent, so it maximises the
-illusion — and the failure is invisible from the inside, which is why it does not
-self-correct.
+That is the illusion of explanatory depth, measured for decades. What is new is
+that model output is maximally fluent, so it maximises the illusion — and the
+failure is invisible from the inside, which is why it does not self-correct.
 
 So the prototype rests on one intervention: **you commit to something before
-Claude will answer.** Committing converts reading into retrieval, and it leaves a
-reference point — your own stated belief — that the answer can then be aimed at.
+Claude will answer.** That converts reading into retrieval, and leaves a reference
+point — your own stated belief — for the answer to be aimed at.
 
 ## What I built
 
-Three surfaces, one mechanic, at increasing levels of structure.
+Three surfaces, one mechanic, at increasing levels of structure. The video walks
+through all three.
 
-**Learn — a single concept.** Predict first. The answer arrives in layers, and the
-part that matters is the **delta**: no score, no percentage, no checkmark, but a
-statement of the *belief* that produced the wrong answer. Then it reinforces it
-however you chose at setup — explaining it back to a confused junior, a quiz from
-memory with the answer hidden, or one transfer question.
+| | you commit | Claude answers with |
+|---|---|---|
+| **Learn** | a prediction about one concept | layered answer + a **delta** naming the *belief* behind the wrong guess — no score, no checkmark — then reinforcement in whichever form you picked at setup |
+| **Shadow** | your approach to a real design task | a **decision diff**: rows of `you \| Claude` tagged `agree` / `diverge` / `gap` / `user-ahead`, plus exactly one probe on the costliest divergence |
+| **Courses** | an answer to an educator's question | evaluation against that author's checkpoints, with progress and recurring weak areas tracked across sessions |
 
-**Shadow — a real task.** You and Claude solve the same design problem at once,
-and Claude's solution is withheld until you commit yours. The reveal is not prose
-but a **decision diff** — four to six rows of `you | Claude`, tagged `agree`,
-`diverge`, `gap`, `user-ahead` — plus exactly one probe on the costliest
-divergence. In testing my password-reset design was fine, and the summary said so.
-What I learned was that *session invalidation was a decision at all*, and I had
-silently defaulted it.
-
-**Courses — someone else's curriculum.** One hand-authored file: frontmatter for
-what the app must reason about (topics, prerequisites, checkpoints, a fixed
-vocabulary for recurring mistakes) and a markdown body of coaching prose. The
-educator owns curriculum and pedagogy; the app owns bookkeeping.
+Shadow is the one I would point at. In testing my password-reset design was fine,
+and the summary said so — what I learned was that *session invalidation was a
+decision at all*, and I had silently defaulted it.
 
 **Across all three, the transfer challenge.** Get something wrong, and later that
-belief returns in a visibly different domain with nothing on screen to read from —
-a distributed-locking miss came back as a hospital infusion pump holding a control
-lease. It is the only thing here that measures what survived *after* the
-explanation was gone.
+belief returns in a different domain with nothing to read from — a
+distributed-locking miss came back as a hospital infusion pump holding a control
+lease. The only thing here that measures what survived *after* the explanation was
+gone.
 
 ## How I got here
 
-I wrote the spec before the code (`spec.md`), and kept a `CLAUDE.md` recording
-what I changed my mind about. Most of the good decisions came from using the thing
-and finding it annoying.
+**Part of this is not new, and the brief invites saying so.** Courses began as a
+system-design practice skill I built for myself in Claude Code and used for
+months: a prompt, a `progress.json`, and a `weak-areas.md` I hand-edited to
+remember where I left off. Its limits were the interesting part — curriculum,
+pedagogy and bookkeeping were tangled in one file, so nobody else could author it
+and I maintained state by hand. Separating those three is what this version adds.
+`scripts/import-progress.mjs` carries the old `progress.json` in, because someone
+with real history should not restart at zero. **Learn and Shadow are new.**
 
-- **Triage was sending broad questions to plain answers.** The spec said a
-  question "so broad that a prediction is meaningless" should skip the loop. In
-  use that fired on *"I want to learn about cassandra db"* — someone who had just
-  declared learning intent got an overview and the line "Straight lookup", which
-  is the toggle looking broken. Triage now keeps topic-shaped questions, and the
-  predict prompt narrows to one pivotal concept.
+I wrote the spec before the code (`spec.md`) and kept a `CLAUDE.md` recording what
+I changed my mind about. Most of the good decisions came from using the thing and
+finding it annoying.
+
+- **Triage sent broad questions to plain answers.** My spec said a question "so
+  broad that a prediction is meaningless" should skip the loop. In use that fired
+  on *"I want to learn about cassandra db"* — someone who had just declared
+  learning intent got an overview and the words "Straight lookup", which is the
+  toggle looking broken. Triage now keeps topic-shaped questions and the predict
+  prompt narrows to one pivotal concept.
 
 - **"End session" was terminal, which punished the likeliest reason for leaving.**
   The requirement was an always-visible way to stop the questions; making that
   exit *permanent* was a constraint I invented, and it hurt exactly the person who
   got stuck and wanted to look something up. It became a pause.
 
-- **A tone regression invisible in the diff.** I keep fixtures for the
-  quality-critical prompts. Fixture 2 is a case where the user's design is
-  *simpler and correct* — a fixed-window rate limiter at 40 requests/second. It
-  came back with three `gap` rows and a probe about a 4,800-request burst. The
-  fault was not the diff prompt: the solver prompt had designed a token bucket
-  with a Lua script and a circuit breaker for an internal API at 40 rps, and the
-  diff faithfully compared against *that*. **The diff can only be as calibrated as
-  the solution it diffs against.**
+- **A tone regression invisible in the diff.** Fixture 2 is a case where the
+  user's design is *simpler and correct* — a fixed-window rate limiter at 40
+  requests/second. It came back with three `gap` rows and a probe about a
+  4,800-request burst. The fault was not the diff prompt: the solver prompt had
+  designed a token bucket with a Lua script and a circuit breaker for an internal
+  API at 40 rps, and the diff faithfully compared against *that*. **The diff can
+  only be as calibrated as the solution it diffs against.**
 
 Shadow itself came from using Learn until I hit its ceiling: it works on one
 concept with one right answer, and real work is not one concept.
 
+On engineering: 23 unit tests cover the incremental XML parser, and two browser
+smoke suites exist because the API can be entirely correct while the UI never
+updates — that shipped once, when a state updater closed over a variable
+reassigned on the next line and every exchange silently stopped rendering.
+
 ## Agency
 
 **The user declares intent; the system never infers it.** The mode at send time is
-the entire boundary mechanism. I explicitly rejected classifying each message as
-follow-up versus fresh, because the errors are asymmetric: quizzing someone
-mid-clarification is annoying but visible and recoverable, whereas silently
-handing a plain answer to someone who asked for the loop makes the feature look
-broken with no explanation — and classifiers are least reliable exactly at the
-boundary where it matters.
+the entire boundary mechanism. I rejected classifying messages as follow-up versus
+fresh because the errors are asymmetric: quizzing someone mid-clarification is
+annoying but visible and recoverable, whereas silently handing a plain answer to
+someone who asked for the loop makes the feature look broken with no explanation —
+and classifiers are least reliable exactly at that boundary.
 
 **Every screen has an escape hatch and the copy never guilts you.** Skipping is a
 first-class path: a skipped prediction stores `NULL` rather than counting as a
 miss, and the reveal omits the delta entirely rather than commenting on the skip.
 Friction without an exit gets abandoned inside a week.
 
-**Claude never overwrites your answer.** Shadow produces an alternative next to
-yours, not a correction of it — which is also why it generates *before* seeing
-your approach. A model shown your design first anchors on your framing, agrees
-with itself, and the comparison collapses into flattery. The solution is redacted
-server-side until you commit, with a test asserting it, because otherwise the
-blurred panel is theatre.
+**Claude never overwrites your answer.** Shadow produces an alternative beside
+yours, not a correction of it — which is why it generates *before* seeing your
+approach. A model shown your design first anchors on it, agrees with itself, and
+the comparison collapses into flattery. The solution is redacted server-side until
+you commit, with a test asserting it, because otherwise the blur is theatre.
 
 **What is not optional is the prediction.** Making it a setting turns Learn mode
 into Answer mode with extra steps. Agency means choosing whether to enter, not
-renegotiating the mechanism once inside.
+renegotiating the mechanism inside.
+
+## What educators needed
+
+The courses surface exists because I was the only person who could use my own
+practice skill. What that required:
+
+- **Authoring is a file, not code.** Frontmatter for what the app must reason
+  about; a markdown body for the coaching. Publishing needs no deploy.
+- **They own the pedagogy, not just the content.** The two shipped courses coach
+  genuinely differently — a patient teacher who never hands out an answer, and an
+  unimpressed staff interviewer — on the same engine.
+- **Their content cannot be silently reinterpreted.** The tutor prompt treats an
+  authored body as data, not instruction, and enumerates what it cannot do:
+  change the output contract, add or remove tags, redefine the taxonomy.
+- **Feedback has to aggregate.** Each topic declares a fixed weak-area vocabulary,
+  which is the only reason a recurring failure counts as one gap rather than three
+  near-duplicate strings.
+- **Prerequisites guide without gating** — *"usually comes after X. You can start
+  anyway."*
+- **Republishing is idempotent.** A course file is hashed, so editing one is an
+  edit rather than a migration.
 
 ## Learning principles
 
@@ -160,23 +183,27 @@ it, nothing else matters.
 
 The product is mostly **prompt assets, not code**. Every model call lives in one
 file, prompts are hand-edited markdown read fresh from disk, and the layered
-output is a single XML contract. Adding a subject means writing a file — which is
-the same reason an educator can publish a course without a deploy.
+output is a single XML contract. Adding a subject means writing a file — the same
+reason an educator publishes without a deploy.
+
+**Different users need different entry points**, and the design already carries
+that: three courses ship at beginner, intermediate and advanced levels by three
+authors, Learn is tuned for someone who does not yet have a working model of a
+concept, and Shadow assumes you do and compares it against Claude's. The mode
+toggle is what lets one product serve both without having to guess which you are.
 
 Cost is shaped deliberately: all four layers of a reveal come from **one** call
 rather than three, triage runs on a cheap model on the critical path, and concept
 tagging is fire-and-forget off it.
 
 The compounding asset is the calibration data — more valuable per user over time,
-free to collect, and eventually what lets the system suppress scaffolding where
+free to collect, and eventually what lets the system drop scaffolding where
 someone is consistently right, solving expertise detection without a test.
 
-What would have to change is conventional: this is single-user by construction
-(SQLite, no auth, one enrollment per course), so multi-tenancy means identity,
-ownership and a hosted database. The part usually hardest to retrofit is already
-done — an authored course body reaches the model as **data, not instruction**, and
-the tutor prompt enumerates what that data cannot do: change the output contract,
-add or remove tags, or redefine the taxonomy.
+What has to change is conventional: this is single-user by construction (SQLite,
+no auth, one enrollment per course), so multi-tenancy means identity, ownership
+and a hosted database. The part usually hardest to retrofit is already done — see
+the data-not-instruction boundary above.
 
 ## Adoption
 
@@ -186,15 +213,15 @@ ship the prediction loop alone — the smallest version carrying most of the val
 behind a flag on one surface, and measure the assistance curve before committing
 further.
 
-I would sequence it: prediction-before-answer first, as the cheapest and most
-testable; the delta second, since it is the quality-critical surface and needs
-prompt iteration against fixtures; Shadow third, for the parallel-generation
-plumbing. Courses belongs with an education or partnerships team, since the real
-work there is recruiting authors, not building software.
+Sequence: prediction-before-answer first, as cheapest and most testable; the delta
+second, since it is quality-critical and needs prompt iteration against fixtures;
+Shadow third, for the parallel-generation plumbing. Courses belongs with an
+education or partnerships team — the real work there is recruiting authors, not
+building software.
 
-The argument I would make internally is the metric one: this is a feature whose
-success looks like reduced engagement, so it has to be sponsored with that
-understood in advance or a dashboard will kill it.
+The argument to make internally is the metric one: this is a feature whose success
+looks like reduced engagement, so it has to be sponsored with that understood in
+advance, or a dashboard will kill it.
 
 ## What I know is missing
 
