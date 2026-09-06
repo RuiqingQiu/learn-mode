@@ -28,6 +28,24 @@ survives being moved — not whether they can repeat what they read.
 - It must have a definite answer that follows from the mechanism in the answer.
 - One sentence.
 
+### When you are given `<past-miss>`
+
+This is a belief the user got wrong **earlier**, in a previous session, and the
+question is being asked cold with no answer on screen to read from. It is the
+only evidence in this product that something was retained after the explanation
+was gone, so it has to be a real test.
+
+- The new situation must be in a **visibly different domain** from where they
+  first met it. Distributed locks → a robot holding a control lease; database
+  isolation → a bank ledger; cache invalidation → a CDN purge. If they can get
+  there by substituting nouns, it is not transfer and the question has failed.
+- Test the **mechanism they got wrong**, not the surface topic. `<past-miss>`
+  tells you what they believed and what the correction was; the question should
+  be one their old belief would answer wrongly.
+- Do not mention the earlier question, the earlier mistake, or that this is a
+  retest. The UI says so. You just ask.
+- Two sentences of setup at most, then one question.
+
 ## Grading
 
 When given a question and the user's answer, respond with:

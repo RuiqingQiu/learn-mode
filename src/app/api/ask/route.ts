@@ -1,5 +1,11 @@
 import { channel } from "@/lib/channel";
-import { buildPrediction, runTriage, streamPlainAnswer, tagConceptsInBackground } from "@/lib/phases";
+import {
+  buildPrediction,
+  runTriage,
+  streamPlainAnswer,
+  streamShadowSolution,
+  tagConceptsInBackground,
+} from "@/lib/phases";
 import * as repo from "@/lib/repo";
 import { isAbort, sse } from "@/lib/sse";
 import type { Mode } from "@/lib/types";
@@ -35,12 +41,43 @@ export async function POST(req: Request) {
       thread_id: threadId,
       mode,
       question,
-      state: mode === "learn" ? "predicting" : "done",
+      state: mode === "learn" ? "predicting" : mode === "shadow" ? "shadowing" : "done",
       context_exchange_id: context ? contextExchangeId : null,
     });
     send({ type: "exchange", exchangeId });
 
     const history = repo.threadHistory(threadId, exchangeId);
+
+    // Skill Shadow. Claude solves the task privately and the result is persisted
+    // rather than streamed — the client must not be able to read it off the wire
+    // before the user commits. Generating *before* seeing their approach is the
+    // whole feature: a model shown the user's design first anchors on it and the
+    // diff turns into agreement.
+    //
+    // No triage. The user declared a design task; there is nothing to classify.
+    if (mode === "shadow") {
+      // Sent first, so they can start writing while Claude is still working.
+      const predictionId = repo.savePredictionPrompt(exchangeId, {
+        type: "open",
+        prompt_text: question,
+      });
+      send({ type: "shadow_commit", predictionId });
+
+      // No abort signal, for the same reason /api/reveal passes none: a solution
+      // that finishes and persists after the browser leaves is cheaper than
+      // regenerating one, and the commit arrives on a separate request anyway.
+      let solution = "";
+      const solving = streamShadowSolution(question, history);
+      solving.on("text", (delta) => {
+        solution += delta;
+      });
+      await solving.finalMessage();
+
+      repo.saveShadowSolution(exchangeId, solution);
+      send({ type: "shadow_ready" });
+      send({ type: "done" });
+      return;
+    }
 
     // Start the plain answer immediately, regardless of mode. In Learn mode it is
     // a bet that triage will say LOOKUP.

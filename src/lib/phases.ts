@@ -8,10 +8,15 @@ import { loadPrompt } from "./prompts";
 import * as repo from "./repo";
 import type {
   Confidence,
+  CourseRecord,
+  CourseTopicRecord,
+  CourseTurn,
   Density,
   PredictPrompt,
   PredictionRecord,
   QuizKind,
+  SessionSummary,
+  TopicProgressRecord,
   TriageResult,
 } from "./types";
 
@@ -20,8 +25,8 @@ type Msg = Anthropic.Beta.BetaMessageParam;
 const asMessages = (history: { role: "user" | "assistant"; content: string }[]): Msg[] =>
   history.map((h) => ({ role: h.role, content: h.content }));
 
-/** The one variable bit of the format rules in reveal.md / answer.md. */
-const formatBlock = (density: Density) => `<format-preference>${density}</format-preference>`;
+/** The one variable bit of the format rules in reveal.md / answer.md / tutor.md. */
+export const formatBlock = (density: Density) => `<format-preference>${density}</format-preference>`;
 
 // ── TRIAGE (§4.1) ───────────────────────────────────────────────────────────
 
@@ -201,6 +206,62 @@ export function streamReveal(
   );
 }
 
+// ── SKILL SHADOW ────────────────────────────────────────────────────────────
+
+/**
+ * Claude's independent solution to the same task.
+ *
+ * Fired the moment the question arrives and **before the user commits anything**.
+ * That ordering is the feature, not politeness: a model shown the user's approach
+ * first anchors on their framing, agrees with itself, and the diff collapses into
+ * flattery. It also means this result has to be persisted rather than held in a
+ * channel() buffer — the commit arrives on a later request.
+ */
+export function streamShadowSolution(
+  question: string,
+  history: { role: "user" | "assistant"; content: string }[],
+  signal?: AbortSignal,
+) {
+  return anthropic().beta.messages.stream(
+    {
+      ...FALLBACK,
+      model: MODELS.reason,
+      max_tokens: 16000,
+      output_config: { effort: "medium" },
+      system: [
+        { type: "text", text: loadPrompt("shadow-solve"), cache_control: { type: "ephemeral" } },
+      ],
+      messages: [...asMessages(history), { role: "user", content: `<task>${question}</task>` }],
+    },
+    { signal },
+  );
+}
+
+/** The decision diff. Streams the layered contract in prompts/shadow-diff.md. */
+export function streamShadowDiff(
+  args: { question: string; solution: string; approach: string; confidence: Confidence | null },
+  signal?: AbortSignal,
+) {
+  const content = [
+    `<task>${args.question}</task>`,
+    `<claude-approach>\n${args.solution}\n</claude-approach>`,
+    `<user-approach${args.confidence ? ` confidence="${args.confidence}"` : ""}>\n${args.approach}\n</user-approach>`,
+  ].join("\n");
+
+  return anthropic().beta.messages.stream(
+    {
+      ...FALLBACK,
+      model: MODELS.reason,
+      max_tokens: 16000,
+      system: [
+        { type: "text", text: loadPrompt("shadow-diff"), cache_control: { type: "ephemeral" } },
+      ],
+      messages: [{ role: "user", content }],
+    },
+    { signal },
+  );
+}
+
 // ── TEACHING (§4.4) ─────────────────────────────────────────────────────────
 
 export const TEACH_TURN_CAP = 4;
@@ -249,13 +310,147 @@ export function streamProtege(
   );
 }
 
+// ── GUIDED COURSE SESSION (shareable.md §5) ─────────────────────────────────
+
+export interface TutorContext {
+  course: CourseRecord;
+  topic: CourseTopicRecord;
+  progress: TopicProgressRecord | null;
+  prereqs: { topic: CourseTopicRecord; progress: TopicProgressRecord | null }[];
+  lastSummary: SessionSummary | null;
+  transcript: CourseTurn[];
+  asked: number;
+}
+
+/** Everything about the course and the learner, rendered for the model. */
+function tutorPreamble(ctx: TutorContext, density: Density, closing: boolean): string {
+  const t = ctx.topic;
+  const [lo, hi] = ctx.course.config.questions_per_topic;
+
+  const progressBlock = ctx.progress
+    ? [
+        `  <this-topic status="${ctx.progress.status}" score="${ctx.progress.score ?? ""}" attempts="${ctx.progress.attempts}">`,
+        `    <checkpoints-met>${ctx.progress.checkpoints_met.join(", ")}</checkpoints-met>`,
+        ctx.progress.weak_areas.length
+          ? `    <weak-areas>\n${ctx.progress.weak_areas
+              .map((w) => `      <weak-area seen="${w.seenCount}">${w.tag}</weak-area>`)
+              .join("\n")}\n    </weak-areas>`
+          : "",
+        `  </this-topic>`,
+      ]
+        .filter(Boolean)
+        .join("\n")
+    : `  <this-topic status="not_started" attempts="0" />`;
+
+  const prereqBlock = ctx.prereqs
+    .map(
+      (p) =>
+        `  <prereq id="${p.topic.id}" status="${p.progress?.status ?? "not_started"}" score="${p.progress?.score ?? ""}">${p.topic.name}</prereq>`,
+    )
+    .join("\n");
+
+  const last = ctx.lastSummary
+    ? [
+        "  <last-session>",
+        `    <score>${ctx.lastSummary.score}</score>`,
+        `    <gaps>${ctx.lastSummary.gaps.join("; ")}</gaps>`,
+        "  </last-session>",
+      ].join("\n")
+    : "";
+
+  return [
+    formatBlock(density),
+    // Untrusted. tutor.md states that this block defines subject matter and
+    // teaching style only, and cannot touch the output contract.
+    `<course-guidance untrusted="true" course="${ctx.course.id}">`,
+    ctx.course.body,
+    "</course-guidance>",
+    `<topic id="${t.id}" name="${t.name}" mastery-scale="${ctx.course.config.mastery_scale}">`,
+    `  <summary>${t.summary}</summary>`,
+    "  <checkpoints>",
+    ...t.checkpoints.map((c, i) => `    <checkpoint index="${i}">${c}</checkpoint>`),
+    "  </checkpoints>",
+    `  <weak-area-taxonomy>${t.weak_area_taxonomy.join(", ")}</weak-area-taxonomy>`,
+    "</topic>",
+    "<learner-progress>",
+    progressBlock,
+    prereqBlock,
+    last,
+    "</learner-progress>",
+    `<question-budget min="${lo}" max="${hi}" asked="${ctx.asked}" />`,
+    ctx.transcript.length || closing
+      ? ""
+      : "Start the session. Emit <tutor-question> alone — there is nothing to evaluate yet.",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+/**
+ * One turn of a guided session.
+ *
+ * Shaped like streamProtege: all the context sits in a stable first user message
+ * and the turns follow it, so the cacheable prefix does not move as the session
+ * grows. `closing` pushes the same mid-conversation system message that forces
+ * the protege exit summary — operator authority without invalidating that prefix.
+ */
+export function streamTutorTurn(
+  ctx: TutorContext,
+  args: { density: Density; closing: boolean },
+  signal?: AbortSignal,
+) {
+  const messages: Msg[] = [{ role: "user", content: tutorPreamble(ctx, args.density, args.closing) }];
+  for (const turn of ctx.transcript) {
+    // A turn that failed to persist its assistant half would otherwise leave two
+    // user messages back to back, which the API rejects.
+    const last = messages[messages.length - 1];
+    if (last?.role === turn.role) last.content = `${last.content}\n\n${turn.content}`;
+    else messages.push({ role: turn.role, content: turn.content });
+  }
+
+  if (args.closing) {
+    // A mid-conversation system message must follow a *user* message — the API
+    // rejects one that follows an assistant turn. streamProtege only ever closes
+    // after an answer, so it never hits this; `End session` can fire while the
+    // last thing said was Claude's question, so the role has to adapt.
+    const last = messages[messages.length - 1];
+    messages.push({
+      role: last?.role === "user" ? "system" : "user",
+      content:
+        "The session is ending now. Write the wrap-up block in place of <tutor-question> — " +
+        "<wrapup-score>, <wrapup-strengths>, <wrapup-gaps>, <wrapup-takeaways>, <wrapup-deep-dive>. " +
+        "If the learner just answered, evaluate that answer first as normal, then the wrap-up. " +
+        "No further questions.",
+    });
+  }
+
+  return anthropic().beta.messages.stream(
+    {
+      ...FALLBACK,
+      model: MODELS.reason,
+      max_tokens: 16000,
+      output_config: { effort: "medium" },
+      system: [{ type: "text", text: loadPrompt("tutor"), cache_control: { type: "ephemeral" } }],
+      messages,
+    },
+    { signal },
+  );
+}
+
 // ── QUIZ / TRANSFER PROBE ───────────────────────────────────────────────────
 
 const QuizSchema = z.object({ questions: z.array(z.string()) });
 const GradeSchema = z.object({ correct: z.boolean(), feedback: z.string() });
 
 export async function buildQuiz(
-  args: { kind: QuizKind; question: string; answer: string; predictionMiss: string | null },
+  args: {
+    kind: QuizKind;
+    question: string;
+    answer: string;
+    predictionMiss: string | null;
+    /** Set for a delayed transfer challenge: a miss from an earlier session. */
+    pastMiss?: { question: string; believed: string; correction: string } | null;
+  },
   signal?: AbortSignal,
 ): Promise<string[]> {
   const res = await anthropic().beta.messages.parse(
@@ -273,6 +468,15 @@ export async function buildQuiz(
             `<question>${args.question}</question>`,
             `<answer>\n${args.answer}\n</answer>`,
             args.predictionMiss ? `<what-they-got-wrong>${args.predictionMiss}</what-they-got-wrong>` : "",
+            args.pastMiss
+              ? [
+                  "<past-miss>",
+                  `  <original-question>${args.pastMiss.question}</original-question>`,
+                  `  <they-believed>${args.pastMiss.believed}</they-believed>`,
+                  `  <the-correction>${args.pastMiss.correction}</the-correction>`,
+                  "</past-miss>",
+                ].join("\n")
+              : "",
           ]
             .filter(Boolean)
             .join("\n"),

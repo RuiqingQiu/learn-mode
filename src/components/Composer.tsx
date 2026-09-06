@@ -30,7 +30,8 @@ export default function Composer({
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "l") {
         e.preventDefault();
-        setMode(mode === "learn" ? "answer" : "learn");
+        // Cycles, rather than toggling two ways — there are three modes now.
+        setMode(mode === "answer" ? "learn" : mode === "learn" ? "shadow" : "answer");
       }
     };
     window.addEventListener("keydown", onKey);
@@ -50,6 +51,9 @@ export default function Composer({
   };
 
   const learn = mode === "learn";
+  /** Both non-plain modes get the emphasised composer — §4.0: the state must be
+   *  obvious before you hit send. */
+  const active = mode !== "answer";
 
   return (
     <div className="border-t border-stone-200 bg-stone-50/90 px-6 py-4 backdrop-blur">
@@ -62,14 +66,20 @@ export default function Composer({
 
         <div
           className={`rounded-xl border bg-white transition-colors ${
-            learn ? "border-stone-800 ring-1 ring-stone-800" : "border-stone-300"
+            active ? "border-stone-800 ring-1 ring-stone-800" : "border-stone-300"
           }`}
         >
           <textarea
             ref={ref}
             rows={1}
             disabled={busy}
-            placeholder={learn ? "Ask something worth predicting on…" : "Ask anything…"}
+            placeholder={
+              mode === "shadow"
+                ? "Give it a design or build task — you and Claude solve it separately…"
+                : learn
+                  ? "Ask something worth predicting on…"
+                  : "Ask anything…"
+            }
             onInput={(e) => {
               const el = e.currentTarget;
               el.style.height = "auto";
@@ -89,7 +99,7 @@ export default function Composer({
               key={flipKey}
               className={`flex rounded-lg bg-stone-100 p-0.5 ${flipKey > 0 ? "animate-toggle-flip rounded-lg" : ""}`}
             >
-              {(["answer", "learn"] as const).map((m) => (
+              {(["answer", "learn", "shadow"] as const).map((m) => (
                 <button
                   key={m}
                   type="button"
@@ -118,9 +128,11 @@ export default function Composer({
         </div>
 
         <p className="mt-2 text-[12px] text-stone-400">
-          {learn
-            ? "Learn mode: you'll be asked to guess first. ⌘↵ sends a plain answer instead."
-            : "Plain answers. ⌘L to switch on Learn mode."}
+          {mode === "shadow"
+            ? "Shadow: Claude solves it too, hidden, while you commit your own approach. ⌘↵ sends a plain answer instead."
+            : learn
+              ? "Learn mode: you'll be asked to guess first. ⌘↵ sends a plain answer instead."
+              : "Plain answers. ⌘L cycles Learn and Shadow."}
         </p>
       </div>
     </div>

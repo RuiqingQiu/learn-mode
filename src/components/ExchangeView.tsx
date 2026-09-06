@@ -5,6 +5,7 @@ import Markdown from "./Markdown";
 import PredictionCard from "./PredictionCard";
 import QuizCard from "./QuizCard";
 import RevealCard from "./RevealCard";
+import ShadowCard from "./ShadowCard";
 import Spinner from "./Spinner";
 import TeachPanel from "./TeachPanel";
 import type { LiveExchange } from "@/lib/client";
@@ -28,6 +29,10 @@ export default function ExchangeView({
   expandFull,
   onQuizAnswer,
   onQuizDismiss,
+  onCommitShadow,
+  onSkipShadow,
+  onProbe,
+  onProbeHint,
 }: {
   ex: LiveExchange;
   busy: boolean;
@@ -47,6 +52,10 @@ export default function ExchangeView({
   expandFull: boolean;
   onQuizAnswer: (questionId: string, text: string) => void;
   onQuizDismiss: () => void;
+  onCommitShadow: (approach: string, confidence: Confidence | null) => void;
+  onSkipShadow: () => void;
+  onProbe: (answer: string) => void;
+  onProbeHint: () => void;
 }) {
   const [peeked, setPeeked] = useState(false);
 
@@ -67,9 +76,9 @@ export default function ExchangeView({
         <p className="text-[17px] leading-[1.5] font-medium tracking-[-0.01em] whitespace-pre-wrap text-stone-900">
           {ex.question}
         </p>
-        {ex.mode === "learn" && (
+        {ex.mode !== "answer" && (
           <span className="mt-1 shrink-0 rounded bg-stone-200/70 px-1.5 py-0.5 font-mono text-[10.5px] tracking-wide text-stone-600 uppercase">
-            learn
+            {ex.mode}
           </span>
         )}
       </div>
@@ -83,7 +92,7 @@ export default function ExchangeView({
         <p className="text-[12.5px] text-stone-400">Sent with your explain-back transcript.</p>
       )}
 
-      {ex.status === "answering" && !ex.answerText && (
+      {ex.status === "answering" && ex.mode !== "shadow" && !ex.answerText && (
         <Spinner
           label={ex.mode === "learn" ? "working out a question for you" : "thinking"}
         />
@@ -93,6 +102,17 @@ export default function ExchangeView({
         <div className={ex.status === "answering" ? "caret-blink" : ""}>
           <Markdown>{ex.answerText}</Markdown>
         </div>
+      )}
+
+      {ex.mode === "shadow" && (
+        <ShadowCard
+          ex={ex}
+          busy={busy}
+          onCommit={onCommitShadow}
+          onSkip={onSkipShadow}
+          onProbe={onProbe}
+          onHint={onProbeHint}
+        />
       )}
 
       {ex.status === "predicting" && ex.prompt && (
@@ -107,7 +127,7 @@ export default function ExchangeView({
         />
       )}
 
-      {ex.submitted && !ex.submitted.skipped && (
+      {ex.mode !== "shadow" && ex.submitted && !ex.submitted.skipped && (
         <GuessRecap
           prompt={ex.prompt}
           choiceId={ex.prompt?.options?.length ? ex.submitted.text : null}

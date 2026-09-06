@@ -1,10 +1,15 @@
-import type { SectionName } from "./types";
+import type { SectionName, ShadowSectionName, TutorSectionName } from "./types";
 
 /**
  * `verdict` and `correct-option` are emitted first by reveal.md and are never
  * rendered inline — they are stored as Prediction.was_correct / correct_option.
  */
-export type StreamSection = SectionName | "verdict" | "correct_option";
+export type StreamSection =
+  | SectionName
+  | ShadowSectionName
+  | TutorSectionName
+  | "verdict"
+  | "correct_option";
 
 /** §4.3: the layered-XML contract. These tag names are the wire format. */
 const TAGS: Record<string, StreamSection> = {
@@ -15,6 +20,31 @@ const TAGS: Record<string, StreamSection> = {
   off: "off",
   core: "core",
   full: "full",
+
+  // Skill Shadow's decision diff (prompts/shadow-diff.md) streams through the
+  // same parser. The probe tags are prefixed rather than nested in a <probe>
+  // container because this map is global: a bare <question> would start
+  // capturing any reveal whose `full` markdown happened to contain that literal.
+  summary: "summary",
+  axes: "axes",
+  "strong-point": "strong_point",
+  "probe-scenario": "probe_scenario",
+  "probe-question": "probe_question",
+
+  // A guided course turn (prompts/tutor.md). Every tag is prefixed for the same
+  // reason the probe tags are: this map is global, so an unprefixed <question>
+  // or <feedback> would hijack any other prompt whose markdown contained it.
+  "eval-rating": "eval_rating",
+  "eval-gaps": "eval_gaps",
+  "eval-checkpoints": "eval_checkpoints",
+  "eval-note": "eval_note",
+  "tutor-feedback": "tutor_feedback",
+  "tutor-question": "tutor_question",
+  "wrapup-score": "wrapup_score",
+  "wrapup-strengths": "wrapup_strengths",
+  "wrapup-gaps": "wrapup_gaps",
+  "wrapup-takeaways": "wrapup_takeaways",
+  "wrapup-deep-dive": "wrapup_deep_dive",
 };
 const CONTAINERS = new Set(["delta"]);
 

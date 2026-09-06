@@ -33,6 +33,15 @@ const page = await browser.newPage({ viewport: { width: 1150, height: 950 } });
 page.on("pageerror", (e) => { console.log("  [pageerror]", e.message); failures++; });
 
 const spinner = page.locator("[role=status]");
+/**
+ * The composer, by placeholder. Not `textarea.first()` — the empty state can also
+ * hold a transfer-challenge card with its own box, and that one comes first in
+ * the DOM.
+ */
+const composer = page.getByPlaceholder(
+  /^(Ask anything|Ask something worth predicting|Give it a design)/,
+);
+
 const panel = page.locator("div.rounded-xl").filter({ hasText: "EXPLAINING IT BACK" });
 const explainBack = page.getByRole("button", { name: /Explain it back/ });
 
@@ -50,7 +59,7 @@ if ((await page.getByText("Before we start").count()) > 0) {
   check((await page.locator("textarea").count()) > 0, "Start drops you into the chat");
 } else {
   // Already onboarded — force the settings the rest of this suite assumes.
-  await page.getByRole("button", { name: "Preferences", exact: true }).click();
+  await page.getByRole("button", { name: /^Preferences/ }).click();
   await page.waitForTimeout(400);
   await page.getByRole("button", { name: /Make me explain it back/ }).click();
   await page.getByRole("button", { name: /Balanced/ }).click();
@@ -68,7 +77,7 @@ await page.waitForTimeout(600);
 
 // ── Answer mode streams without a refresh ─────────────────────────────────
 log("answer mode");
-await page.locator("textarea").first().fill("What's the flag to make rsync preserve symlinks?");
+await composer.fill("What's the flag to make rsync preserve symlinks?");
 await page.keyboard.press("Enter");
 await page.waitForTimeout(500);
 check((await spinner.count()) > 0, "spinner while waiting for the answer");
@@ -83,8 +92,9 @@ log("learn mode");
 await page.getByTitle("New thread").click();
 await page.waitForTimeout(600);
 await page.getByRole("button", { name: "learn", exact: true }).click();
-await page.locator("textarea").first()
-  .fill("Does a defer inside a for loop run at the end of each iteration, or at the end of the function?");
+await composer.fill(
+  "Does a defer inside a for loop run at the end of each iteration, or at the end of the function?",
+);
 await page.keyboard.press("Enter");
 await page.waitForTimeout(700);
 check(
@@ -104,7 +114,7 @@ log("submitting a guess");
 const optionBtns = page.locator("main button.w-full");
 const isChoice = (await optionBtns.count()) > 0;
 if (isChoice) await optionBtns.first().click();
-else await page.locator("main textarea").first().fill("at the end of each iteration");
+else await page.getByPlaceholder(/^Your guess/).fill("at the end of each iteration");
 await page.locator('input[name="confidence"]').nth(1).check();
 await page.getByRole("button", { name: "Submit", exact: true }).click();
 await page.waitForTimeout(700);
@@ -227,8 +237,13 @@ check(await inViewport(panel), "the panel stays in view while the junior replies
 await pauseBtn.click();
 await page.waitForTimeout(500);
 await page.getByRole("button", { name: "Clear", exact: true }).click();
-await page.waitForTimeout(700);
-check((await page.getByText("EXPLAINING IT BACK").count()) === 0, "Clear discards the session");
+// Wait for the panel to go, rather than sleeping past a network round trip and a
+// re-render — a fixed 700ms raced it.
+await page
+  .getByText("EXPLAINING IT BACK")
+  .waitFor({ state: "detached", timeout: 10000 })
+  .then(() => check(true, "Clear discards the session"))
+  .catch(() => check(false, "Clear discards the session"));
 check((await explainBack.count()) > 0, "after Clear you can start over");
 
 const removed = await page.evaluate(async (keep) => {

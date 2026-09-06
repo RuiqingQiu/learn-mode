@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Composer from "./Composer";
+import ChallengeCard from "./ChallengeCard";
 import ExchangeView from "./ExchangeView";
 import Onboarding from "./Onboarding";
 import TeachPanel from "./TeachPanel";
@@ -9,12 +10,14 @@ import { api, blankExchange, fromRecord, readSSE } from "@/lib/client";
 import type { LiveExchange } from "@/lib/client";
 import { DEFAULT_PREFERENCES } from "@/lib/types";
 import type {
+  Challenge,
   Confidence,
   Mode,
   PredictPrompt,
   Preferences,
   QuizKind,
   SectionName,
+  ShadowSectionName,
   ThreadSummary,
   TriageResult,
 } from "@/lib/types";
@@ -34,6 +37,13 @@ export default function Chat({ ephemeral = false }: { ephemeral?: boolean }) {
   const [prefs, setPrefs] = useState<Preferences | null>(null);
   const [prefsLoaded, setPrefsLoaded] = useState(false);
   const [editingPrefs, setEditingPrefs] = useState(false);
+  const [challenge, setChallenge] = useState<Challenge | null>(null);
+  const [challengePending, setChallengePending] = useState(false);
+  const [challengeResult, setChallengeResult] = useState<{
+    correct: boolean | null;
+    feedback: string;
+  } | null>(null);
+  const [challengeDismissed, setChallengeDismissed] = useState(false);
 
   const bottom = useRef<HTMLDivElement>(null);
 
@@ -78,7 +88,13 @@ export default function Chat({ ephemeral = false }: { ephemeral?: boolean }) {
     // Follow the exchange that is actually streaming. Jumping to the absolute
     // bottom yanks the user off a live answer — and off the reply box they are
     // typing in, once the protégé panel is no longer the last thing on the page.
-    const streaming = exchanges.find((e) => e.status === "answering" || e.status === "revealing");
+    const streaming = exchanges.find(
+      (e) =>
+        e.status === "answering" ||
+        e.status === "revealing" ||
+        e.status === "shadowing" ||
+        e.status === "diffing",
+    );
     const el = streaming?.id ? document.getElementById(`ex-${streaming.id}`) : null;
     (el ?? bottom.current)?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [exchanges]);
@@ -125,6 +141,15 @@ export default function Chat({ ephemeral = false }: { ephemeral?: boolean }) {
               predictionId: ev.predictionId as string,
               prompt: ev.prompt as PredictPrompt,
             }));
+            break;
+          case "shadow_commit":
+            patch(key, (e) => ({ ...e, status: "shadowing", predictionId: ev.predictionId as string }));
+            break;
+          case "shadow_ready":
+            // Claude has finished solving. The solution deliberately does not
+            // ride this event — it is fetched from /api/shadow once the user has
+            // committed, so it is never in the browser before then.
+            patch(key, (e) => ({ ...e, shadow: { ...e.shadow, solving: false } }));
             break;
           case "done":
             patch(key, (e) => (e.status === "answering" ? { ...e, status: "done" } : e));
@@ -211,6 +236,165 @@ export default function Chat({ ephemeral = false }: { ephemeral?: boolean }) {
         hintPending: false,
         error: err instanceof Error ? err.message : String(err),
       }));
+    }
+  };
+
+  // ── SKILL SHADOW ──────────────────────────────────────────────────────────
+
+  const runShadowDiff = useCallback(
+    async (key: string, id: string, known: string | null) => {
+      // Claude's solution is fetched, not pushed — see the shadow_ready handler.
+      const solution = known ?? (await api.shadowSolution(id)).solution;
+      patch(key, (e) => ({
+        ...e,
+        status: "diffing",
+        shadow: {
+          ...e.shadow,
+          solution,
+          solving: false,
+          awaitingSolution: false,
+          diffing: true,
+          sections: {},
+        },
+      }));
+      try {
+        await readSSE("/api/shadow-diff", { exchangeId: id }, (ev: Ev) => {
+          if (ev.type === "section") {
+            const name = ev.name as ShadowSectionName;
+            patch(key, (e) => ({
+              ...e,
+              shadow: {
+                ...e.shadow,
+                sections: {
+                  ...e.shadow.sections,
+                  [name]: (e.shadow.sections[name] ?? "") + (ev.delta as string),
+                },
+              },
+            }));
+          } else if (ev.type === "error") {
+            patch(key, (e) => ({ ...e, status: "error", error: ev.message as string }));
+          }
+        });
+      } finally {
+        patch(key, (e) => ({
+          ...e,
+          status: e.status === "diffing" ? "done" : e.status,
+          shadow: { ...e.shadow, diffing: false },
+        }));
+      }
+    },
+    [patch],
+  );
+
+  /**
+   * Start the diff as soon as both halves exist. Declarative rather than chained
+   * off the commit, because the two can land in either order: the user may commit
+   * while Claude is still working, or Claude may finish while they are still
+   * typing. The ref is the double-fire guard (effects run twice in dev).
+   */
+  const diffStarted = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    for (const e of exchanges) {
+      if (e.mode !== "shadow" || !e.id) continue;
+      if (!e.shadow.committed || e.shadow.skipped) continue;
+      if (e.shadow.solving || e.shadow.diffing) continue;
+      // Already diffed — including a rehydrated one.
+      if (e.shadow.sections.axes) continue;
+      if (diffStarted.current.has(e.key)) continue;
+      diffStarted.current.add(e.key);
+      void runShadowDiff(e.key, e.id, e.shadow.solution);
+    }
+  }, [exchanges, runShadowDiff]);
+
+  const commitShadow = async (
+    key: string,
+    id: string,
+    predictionId: string,
+    approach: string,
+    confidence: Confidence | null,
+  ) => {
+    patch(key, (e) => ({
+      ...e,
+      submitted: { text: approach, confidence, skipped: false },
+      shadow: { ...e.shadow, committed: true, awaitingSolution: e.shadow.solving },
+    }));
+    const { solution } = await api.commitShadow(id, predictionId, approach, confidence);
+    if (solution) patch(key, (e) => ({ ...e, shadow: { ...e.shadow, solution } }));
+  };
+
+  /** §1's escape hatch: the solution, no diff, no probe, and no comment on it. */
+  const skipShadow = async (key: string, id: string, predictionId: string) => {
+    patch(key, (e) => ({
+      ...e,
+      status: "done",
+      submitted: { text: "", confidence: null, skipped: true },
+      shadow: { ...e.shadow, skipped: true },
+    }));
+    const { solution } = await api.skipShadow(id, predictionId);
+    patch(key, (e) => ({ ...e, shadow: { ...e.shadow, solution, solving: false } }));
+  };
+
+  const answerProbe = async (key: string, id: string, predictionId: string, answer: string) => {
+    patch(key, (e) => ({ ...e, shadow: { ...e.shadow, probePending: true } }));
+    try {
+      const { correct, feedback } = await api.answerProbe(id, predictionId, answer);
+      patch(key, (e) => ({
+        ...e,
+        shadow: {
+          ...e.shadow,
+          probeAnswer: answer,
+          probeFeedback: feedback,
+          probeCorrect: correct,
+          probePending: false,
+        },
+      }));
+    } catch (err) {
+      patch(key, (e) => ({
+        ...e,
+        shadow: { ...e.shadow, probePending: false },
+        error: err instanceof Error ? err.message : String(err),
+      }));
+    }
+  };
+
+  const probeHint = async (key: string, id: string, predictionId: string) => {
+    patch(key, (e) => ({ ...e, shadow: { ...e.shadow, hintPending: true } }));
+    try {
+      const { hint } = await api.shadowHint(id, predictionId);
+      patch(key, (e) => ({ ...e, shadow: { ...e.shadow, hint, hintPending: false } }));
+    } catch {
+      patch(key, (e) => ({ ...e, shadow: { ...e.shadow, hintPending: false } }));
+    }
+  };
+
+  // ── DELAYED TRANSFER CHALLENGE ────────────────────────────────────────────
+
+  /**
+   * Looked for only in an empty thread. Generation stamps `challenged_at`, so a
+   * belief is re-tested at most once ever — the ref stops React's dev double-run
+   * from burning that one shot on a duplicate call.
+   */
+  const challengeAsked = useRef<string | null>(null);
+  useEffect(() => {
+    if (!threadId || exchanges.length > 0 || challenge || challengeDismissed) return;
+    if (challengeAsked.current === threadId) return;
+    challengeAsked.current = threadId;
+    void api
+      .peekChallenge()
+      .then(({ challenge }) => setChallenge(challenge))
+      .catch(() => {});
+  }, [threadId, exchanges.length, challenge, challengeDismissed]);
+
+  const answerChallenge = async (answer: string) => {
+    if (!challenge) return;
+    setChallengePending(true);
+    try {
+      const res = await api.answerChallenge(challenge.id, answer);
+      setChallengeResult(res);
+    } catch (err) {
+      setChallengeResult({ correct: null, feedback: err instanceof Error ? err.message : String(err) });
+    } finally {
+      setChallengePending(false);
     }
   };
 
@@ -388,17 +572,17 @@ export default function Chat({ ephemeral = false }: { ephemeral?: boolean }) {
 
   if (fatal) {
     return (
-      <div className="flex h-screen items-center justify-center p-8">
+      <div className="flex h-[calc(100vh-49px)] items-center justify-center p-8">
         <p className="max-w-md text-[14px] text-red-800">{fatal}</p>
       </div>
     );
   }
 
   return (
-    <div className="flex h-screen">
+    <div className="flex h-[calc(100vh-49px)]">
       <aside className="hidden w-60 shrink-0 flex-col border-r border-stone-200 bg-stone-100/60 md:flex">
         <div className="flex items-center justify-between px-4 py-4">
-          <span className="text-[13px] font-semibold tracking-tight text-stone-900">Learn Mode</span>
+          <span className="font-mono text-[10.5px] tracking-wide text-stone-400 uppercase">threads</span>
           <button
             type="button"
             onClick={newThread}
@@ -489,11 +673,25 @@ export default function Chat({ ephemeral = false }: { ephemeral?: boolean }) {
               </div>
             )}
             {exchanges.length === 0 && (
-              <div className="pt-32 pb-8">
+              <div className="space-y-6 pt-32 pb-8">
                 <p className="text-[15px] text-stone-500">
-                  Ask anything. Flip the toggle to <span className="text-stone-800">Learn</span> when
-                  you want to be made to guess first.
+                  Ask anything. <span className="text-stone-800">Learn</span> makes you guess first;{" "}
+                  <span className="text-stone-800">Shadow</span> has Claude solve it alongside you,
+                  hidden, until you commit your own approach.
                 </p>
+                {/* A miss from an earlier session, re-tested cold. Only in an empty
+                    thread — interrupting work in progress to quiz someone is the
+                    fastest way to make this feel hostile. */}
+                {challenge && !challengeDismissed && (
+                  <ChallengeCard
+                    challenge={challenge}
+                    pending={challengePending}
+                    correct={challengeResult?.correct ?? null}
+                    feedback={challengeResult?.feedback ?? null}
+                    onAnswer={(answer) => void answerChallenge(answer)}
+                    onDismiss={() => setChallengeDismissed(true)}
+                  />
+                )}
               </div>
             )}
             {exchanges.map((ex) => (
@@ -514,6 +712,12 @@ export default function Chat({ ephemeral = false }: { ephemeral?: boolean }) {
                 onClearTeaching={() => void clearTeaching(ex.key, ex.id)}
                 onQuizAnswer={(qid: string, text: string) => void answerQuiz(ex.key, ex.id, qid, text)}
                 onQuizDismiss={() => patch(ex.key, (e) => ({ ...e, quizDismissed: true }))}
+                onCommitShadow={(approach, confidence) =>
+                  void commitShadow(ex.key, ex.id, ex.predictionId ?? "", approach, confidence)
+                }
+                onSkipShadow={() => void skipShadow(ex.key, ex.id, ex.predictionId ?? "")}
+                onProbe={(answer) => void answerProbe(ex.key, ex.id, ex.predictionId ?? "", answer)}
+                onProbeHint={() => void probeHint(ex.key, ex.id, ex.predictionId ?? "")}
                 quizKind={(prefs ?? DEFAULT_PREFERENCES).reinforcement === "transfer_probe" ? "transfer" : "recall"}
                 expandFull={!!currentThread?.is_example}
                 renderTeach={!floated || floated.key !== ex.key}
