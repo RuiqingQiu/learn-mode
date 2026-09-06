@@ -46,30 +46,61 @@ through all three.
 | **Shadow** | your approach to a real design task | a **decision diff**: rows of `you \| Claude` tagged `agree` / `diverge` / `gap` / `user-ahead`, plus exactly one probe on the costliest divergence |
 | **Courses** | an answer to an educator's question | evaluation against that author's checkpoints, with progress and recurring weak areas tracked across sessions |
 
-Shadow is the one I would point at. In testing my password-reset design was fine,
-and the summary said so — what I learned was that *session invalidation was a
-decision at all*, and I had silently defaulted it.
+Shadow is the one I would point at: in testing my password-reset design was fine
+and the summary said so, and what I learned was that *session invalidation was a
+decision at all*.
 
-**Across all three, the transfer challenge.** Get something wrong, and later that
-belief returns in a different domain with nothing to read from — a
-distributed-locking miss came back as a hospital infusion pump holding a control
-lease. The only thing here that measures what survived *after* the explanation was
-gone.
+**Across all three, the transfer challenge.** Get something wrong and that belief
+returns later in a different domain with nothing to read from — a
+distributed-locking miss came back as an infusion pump holding a control lease.
+The only thing here that measures what survived *after* the explanation was gone.
 
 ## How I got here
 
-**Part of this is not new, and the brief invites saying so.** Courses began as a
-system-design practice skill I built for myself in Claude Code and used for
-months: a prompt, a `progress.json`, and a `weak-areas.md` I hand-edited to
-remember where I left off. Its limits were the interesting part — curriculum,
-pedagogy and bookkeeping were tangled in one file, so nobody else could author it
-and I maintained state by hand. Separating those three is what this version adds.
-`scripts/import-progress.mjs` carries the old `progress.json` in, because someone
-with real history should not restart at zero. **Learn and Shadow are new.**
+**I used Claude as a research partner before using it as a code generator.** I
+worked through what specifically breaks about learning when a fluent answer is
+always available, then which interventions have evidence behind them. I was the
+first user, so the filter was blunt: would *I* use this daily.
 
-I wrote the spec before the code (`spec.md`) and kept a `CLAUDE.md` recording what
-I changed my mind about. Most of the good decisions came from using the thing and
-finding it annoying.
+**Learn came from how I learn.** I retain something far better when I have to
+explain it to somebody afterwards than when I only read it. So the first thing I
+built was the loop I already run informally — commit a guess, get the answer, then
+have to defend it to a confused junior.
+
+**Preferences came from noticing I am not everyone.** People I know would rather
+be quizzed later, to find out whether it stuck. So reinforcement became a choice
+at setup rather than my own habit imposed on everybody.
+
+**One thing I built and threw away.** A harness that would infer your skill level
+over time and taper the scaffolding — more hand-holding early, less as you
+improved. I dropped it: I could not demonstrate the moment someone crosses from
+needing help to not needing it, and without that it is a claim rather than a
+behaviour. It also never answered the harder question of what slowing an expert
+down is actually *for*. The signal it needed is still being collected — confidence
+against correctness, per concept — and I would rather ship the data with an honest
+gap than a threshold I cannot defend.
+
+**Shadow came from Learn's ceiling, and one hard requirement.** Learn works on a
+single concept with one right answer, and real work is not one concept. For design
+problems I did not want Claude *reacting* to my answer — I wanted an independent
+one of its own, put beside mine, with the gap between them named. That requirement
+is why the solver runs before it can see your approach.
+
+**Courses came from my own Claude Code setup.** I had been practising system
+design against a prompt, a `progress.json` and a `weak-areas.md` I hand-edited to
+remember where I left off. The loop was genuinely powerful: get a question, type
+the answer out, have it validated, and end up with an artifact — scored strengths
+and weaknesses, where later questions tie back to the weaknesses you keep
+repeating. Its limit was that it was single-player: curriculum, pedagogy and
+bookkeeping were tangled in one file, so nobody else could author it and I
+maintained state by hand. Separating those three is what this version adds, plus
+the UX for somebody else to publish one. `scripts/import-progress.mjs` carries the
+old `progress.json` in, because someone with real history should not restart at
+zero. **Learn and Shadow are new.**
+
+I wrote a spec before the code (`spec.md`) and kept a `CLAUDE.md` recording what I
+changed my mind about. Most of the good decisions came from using the thing and
+finding it annoying:
 
 - **Triage sent broad questions to plain answers.** My spec said a question "so
   broad that a prediction is meaningless" should skip the loop. In use that fired
@@ -78,11 +109,6 @@ finding it annoying.
   toggle looking broken. Triage now keeps topic-shaped questions and the predict
   prompt narrows to one pivotal concept.
 
-- **"End session" was terminal, which punished the likeliest reason for leaving.**
-  The requirement was an always-visible way to stop the questions; making that
-  exit *permanent* was a constraint I invented, and it hurt exactly the person who
-  got stuck and wanted to look something up. It became a pause.
-
 - **A tone regression invisible in the diff.** Fixture 2 is a case where the
   user's design is *simpler and correct* — a fixed-window rate limiter at 40
   requests/second. It came back with three `gap` rows and a probe about a
@@ -90,9 +116,6 @@ finding it annoying.
   designed a token bucket with a Lua script and a circuit breaker for an internal
   API at 40 rps, and the diff faithfully compared against *that*. **The diff can
   only be as calibrated as the solution it diffs against.**
-
-Shadow itself came from using Learn until I hit its ceiling: it works on one
-concept with one right answer, and real work is not one concept.
 
 On engineering: 23 unit tests cover the incremental XML parser, and two browser
 smoke suites exist because the API can be entirely correct while the UI never
@@ -114,10 +137,9 @@ miss, and the reveal omits the delta entirely rather than commenting on the skip
 Friction without an exit gets abandoned inside a week.
 
 **Claude never overwrites your answer.** Shadow produces an alternative beside
-yours, not a correction of it — which is why it generates *before* seeing your
-approach. A model shown your design first anchors on it, agrees with itself, and
-the comparison collapses into flattery. The solution is redacted server-side until
-you commit, with a test asserting it, because otherwise the blur is theatre.
+yours, not a correction of it. A model shown your design first anchors on it and
+agrees with itself, so the solution is redacted server-side until you commit —
+with a test asserting it, because otherwise the blur is theatre.
 
 **What is not optional is the prediction.** Making it a setting turns Learn mode
 into Answer mode with extra steps. Agency means choosing whether to enter, not
@@ -188,36 +210,29 @@ it, nothing else matters.
 
 ## Scaling
 
-The product is mostly **prompt assets, not code**. Every model call lives in one
+The product is mostly **prompt assets, not code** — every model call lives in one
 file, prompts are hand-edited markdown read fresh from disk, and the layered
 output is a single XML contract. Adding a subject means writing a file.
 
 **Different users need different entry points**, and the design carries that:
-three courses ship at beginner, intermediate and advanced levels by three authors;
-Learn is tuned for someone without a working model of a concept, Shadow assumes
-you have one. The mode toggle lets one product serve both without guessing which
-you are.
+three courses ship at three levels by three authors; Learn suits someone without a
+working model of a concept, Shadow assumes you have one. The mode toggle serves
+both without guessing which you are.
 
-**Cost is linear in exchanges, not in session length**, which is the property that
-matters at a million users. Nothing fans out: there is no retrieval step and no
-per-message chain. A Learn exchange is one Haiku classification plus one Opus
-generation — all four layers of the reveal come from a single call rather than
-three — with concept tagging fired off the critical path. A Shadow exchange is two
-Opus generations and a short grade. A course turn is one call, and the number of
-turns is bounded by an authored question budget rather than open-ended chat. The
-prompt files ship as cached system blocks, so the fixed part of every request is
-cached and only the variable content is fresh.
+**Cost is linear in exchanges, not session length** — nothing fans out, with no
+retrieval step and no per-message chain. A Learn exchange is one Haiku
+classification plus one Opus generation (all four layers of the reveal from a
+single call, not three), with tagging fired off the critical path. Shadow is two
+Opus generations and a short grade. A course turn is one call, bounded by an
+authored question budget rather than open-ended chat. Prompt files ship as cached
+system blocks, so only the variable content of each request is fresh.
 
 The obvious lever — run Shadow's solver on a cheaper model — is the one I would
-*not* pull. Fixture 2 showed the diff is only as calibrated as the solution it
-compares against, so degrading the solver silently degrades the thing the user
-actually reads. Latency splits the same way: twenty seconds is fine in Shadow,
-where you are meant to be typing through it, and unacceptable in triage, which is
-why triage is the one thing on the critical path and why it runs on Haiku.
-
-The compounding asset is the calibration data: free to collect, more valuable per
-user over time, and eventually what lets the system drop scaffolding where someone
-is consistently right — expertise detection without a test.
+*not* pull: fixture 2 showed the diff is only as calibrated as the solution it
+compares against, so degrading the solver silently degrades what the user reads.
+Latency splits the same way. Twenty seconds is fine in Shadow, where you are meant
+to be typing through it, and unacceptable in triage — which is why triage is the
+one thing on the critical path and runs on Haiku.
 
 What has to change is conventional. This is single-user by construction (SQLite,
 no auth, one enrollment per course), so multi-tenancy means identity, ownership
