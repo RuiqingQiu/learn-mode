@@ -8,7 +8,10 @@
     "typecheck": "tsc --noEmit",
     "test": "node --experimental-strip-types --no-warnings --test 'src/**/*.test.ts'",
     "smoke": "node scripts/smoke.mjs",
-    "gen:examples": "node scripts/generate-examples.mjs"
+    "gen:examples": "node scripts/generate-examples.mjs",
+    "smoke:shadow": "node scripts/smoke-shadow.mjs",
+    "smoke:course": "node scripts/smoke-course.mjs",
+    "import:progress": "node scripts/import-progress.mjs"
   },
   "keywords": [],
   "author": "",
@@ -23,6 +26,7 @@
     "react-dom": "^19.2.8",
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.1",
+    "yaml": "^2.9.0",
     "zod": "^4.5.4"
   },
   "devDependencies": {

@@ -6,11 +6,13 @@ const nextConfig: NextConfig = {
   // better-sqlite3 is a native addon — it must not be bundled by webpack/turbopack.
   serverExternalPackages: ["better-sqlite3"],
 
-  // prompts/*.md are read from disk at request time (see src/lib/prompts.ts).
-  // Nothing imports them, so file tracing would leave them out of the deployment
-  // and every model call would 404 at runtime.
+  // prompts/*.md are read from disk at request time (see src/lib/prompts.ts), and
+  // courses/*.md are read at boot by seedCourses(). Nothing imports either, so
+  // file tracing would leave them out of the deployment and every model call
+  // would 404 at runtime while the course list came back empty.
   outputFileTracingIncludes: {
-    "/api/**/*": ["./prompts/**/*"],
+    "/api/**/*": ["./prompts/**/*", "./courses/**/*"],
+    "/learn/**/*": ["./courses/**/*"],
   },
 };
 

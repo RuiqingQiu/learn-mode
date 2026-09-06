@@ -1,7 +1,14 @@
 "use client";
 
 import type {
+  Challenge,
   Confidence,
+  CourseRecord,
+  CourseSessionRecord,
+  CourseTopicRecord,
+  EnrollmentRecord,
+  TopicProgressRecord,
+  WeakArea,
   Preferences,
   QuizKind,
   QuizQuestion,
@@ -9,6 +16,7 @@ import type {
   Mode,
   PredictPrompt,
   SectionName,
+  ShadowSectionName,
   ThreadSummary,
   TriageResult,
 } from "./types";
@@ -83,10 +91,71 @@ export const api = {
   savePreferences: (p: Preferences) => post<{ preferences: Preferences }>("/api/preferences", p),
   resetPreferences: () => json<{ preferences: null }>("/api/preferences", { method: "DELETE" }),
 
+  commitShadow: (
+    exchangeId: string,
+    predictionId: string,
+    approach: string,
+    confidence: Confidence | null,
+  ) =>
+    post<{ solution: string | null }>("/api/shadow", {
+      action: "commit",
+      exchangeId,
+      predictionId,
+      approach,
+      confidence,
+    }),
+  shadowSolution: (exchangeId: string) =>
+    post<{ solution: string | null }>("/api/shadow", { action: "solution", exchangeId }),
+  skipShadow: (exchangeId: string, predictionId: string) =>
+    post<{ solution: string | null }>("/api/shadow", { action: "skip", exchangeId, predictionId }),
+  shadowHint: (exchangeId: string, predictionId: string) =>
+    post<{ hint: string }>("/api/shadow", { action: "hint", exchangeId, predictionId }),
+  answerProbe: (exchangeId: string, predictionId: string, answer: string) =>
+    post<{ correct: boolean; feedback: string }>("/api/shadow", {
+      action: "probe",
+      exchangeId,
+      predictionId,
+      answer,
+    }),
+
+  peekChallenge: (excludeExchangeId?: string) =>
+    post<{ challenge: Challenge | null }>("/api/challenge", { action: "peek", excludeExchangeId }),
+  answerChallenge: (id: string, answer: string) =>
+    post<{ correct: boolean | null; feedback: string }>("/api/challenge", {
+      action: "answer",
+      id,
+      answer,
+    }),
+
   startQuiz: (exchangeId: string, kind: QuizKind) =>
     post<{ questions: QuizQuestion[] }>("/api/quiz", { action: "start", exchangeId, kind }),
   answerQuiz: (exchangeId: string, questionId: string, text: string) =>
     post<{ questions: QuizQuestion[] }>("/api/quiz", { action: "answer", exchangeId, questionId, text }),
+
+  // ── courses ───────────────────────────────────────────────────────────────
+  listCourses: () => json<{ courses: (CourseRecord & { enrolled: boolean })[] }>("/api/courses"),
+  publishCourse: (source: string) =>
+    post<{ course: CourseRecord; errors?: string[] }>("/api/courses", { source }),
+  getCourse: (id: string) =>
+    json<{
+      course: CourseRecord;
+      enrollment: EnrollmentRecord | null;
+      progress: TopicProgressRecord[];
+    }>(`/api/courses/${id}`),
+  enroll: (courseId: string) => post<{ enrollment: EnrollmentRecord }>("/api/enrollments", { courseId }),
+  startCourseSession: (courseId: string, topicId: string) =>
+    post<{ session: CourseSessionRecord }>("/api/sessions", { courseId, topicId }),
+  getCourseSession: (id: string) =>
+    json<{
+      session: CourseSessionRecord;
+      topic: CourseTopicRecord;
+      course: { id: string; title: string; config: CourseRecord["config"] };
+      progress: TopicProgressRecord | null;
+    }>(`/api/sessions/${id}`),
+  courseNotes: (enrollmentId: string) =>
+    json<{ weakAreas: (WeakArea & { topicId: string })[]; sessions: CourseSessionRecord[] }>(
+      `/api/enrollments/${enrollmentId}/notes`,
+    ),
 };
 
 // ── client-side view of an exchange ─────────────────────────────────────────
@@ -102,6 +171,9 @@ export type ExchangeStatus =
   | "revealing"
   | "revealed"
   | "teaching"
+  // Skill Shadow: Claude is solving privately / the decision diff is streaming.
+  | "shadowing"
+  | "diffing"
   | "done"
   | "error";
 
@@ -136,6 +208,30 @@ export interface LiveExchange {
    *  you can start explaining back while `full` is still arriving. */
   revealStreaming: boolean;
   sections: Partial<Record<SectionName, string>>;
+  /**
+   * Skill Shadow. Nested rather than flattened onto the top level, following
+   * `teach` — a phase with this many fields does not belong in the flat bag.
+   */
+  shadow: {
+    /** Claude's parallel solution. Null until the user commits or skips: it is
+     *  fetched from /api/shadow, never pushed down the /api/ask stream. */
+    solution: string | null;
+    /** /api/ask is still generating it. */
+    solving: boolean;
+    committed: boolean;
+    /** Committed first; the diff starts when the solution lands. */
+    awaitingSolution: boolean;
+    /** Escape hatch taken — show the solution, no diff, no probe. */
+    skipped: boolean;
+    diffing: boolean;
+    sections: Partial<Record<ShadowSectionName, string>>;
+    probeAnswer: string | null;
+    probeFeedback: string | null;
+    probeCorrect: boolean | null;
+    probePending: boolean;
+    hint: string | null;
+    hintPending: boolean;
+  };
   teach: {
     turns: TeachTurn[];
     streaming: string;
@@ -172,6 +268,21 @@ export function blankExchange(key: string, question: string, mode: Mode): LiveEx
     quizDismissed: false,
     revealStreaming: false,
     sections: {},
+    shadow: {
+      solution: null,
+      solving: mode === "shadow",
+      committed: false,
+      awaitingSolution: false,
+      skipped: false,
+      diffing: false,
+      sections: {},
+      probeAnswer: null,
+      probeFeedback: null,
+      probeCorrect: null,
+      probePending: false,
+      hint: null,
+      hintPending: false,
+    },
     teach: {
       turns: [],
       streaming: "",
@@ -194,9 +305,18 @@ export function fromRecord(r: ExchangeRecord): LiveExchange {
     .map((t) => ({ junior: t.junior_msg, user: t.user_msg }));
   const summary = r.teach_turns.find((t) => t.idx >= TEACH_TURN_CAP)?.junior_msg ?? null;
 
+  const committed = !!r.prediction && (r.prediction.text !== null || r.prediction.skipped);
+  const hasDiff = !!r.shadow?.axes;
+
   const revealed = !!r.answer?.gist;
   let status: ExchangeStatus;
-  if (r.state === "predicting") status = r.prediction ? "predicting" : "done";
+  if (r.mode === "shadow") {
+    // A reload while the diff is mid-flight: the stream is gone, but the route
+    // passes no abort signal, so it will still finish and persist server-side.
+    if (r.state === "diffing" && !hasDiff) status = "diffing";
+    else if (r.state === "shadowing") status = "shadowing";
+    else status = "done";
+  } else if (r.state === "predicting") status = r.prediction ? "predicting" : "done";
   else if (r.state === "teaching") status = "teaching";
   else if (revealed && teachTurns.length === 0) status = "revealed";
   else status = "done";
@@ -239,6 +359,27 @@ export function fromRecord(r: ExchangeRecord): LiveExchange {
       full: r.answer?.full ?? undefined,
       held_up: r.answer?.delta_held_up ?? undefined,
       off: r.answer?.delta_off ?? undefined,
+    },
+    shadow: {
+      solution: r.shadow?.solution ?? null,
+      solving: r.mode === "shadow" && !r.shadow?.ready,
+      committed,
+      awaitingSolution: committed && !r.shadow?.ready,
+      skipped: !!r.prediction?.skipped,
+      diffing: false,
+      sections: {
+        summary: r.shadow?.summary ?? undefined,
+        axes: r.shadow?.axes ?? undefined,
+        strong_point: r.shadow?.strong_point ?? undefined,
+        probe_scenario: r.shadow?.probe_scenario ?? undefined,
+        probe_question: r.shadow?.probe_question ?? undefined,
+      },
+      probeAnswer: r.shadow?.probe_answer ?? null,
+      probeFeedback: r.shadow?.probe_feedback ?? null,
+      probeCorrect: r.prediction?.was_correct ?? null,
+      probePending: false,
+      hint: null,
+      hintPending: false,
     },
     teach: {
       turns: teachTurns,
