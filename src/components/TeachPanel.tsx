@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import InlineMarkdown from "./InlineMarkdown";
 import Spinner from "./Spinner";
 import Markdown from "./Markdown";
 import type { TeachTurn } from "@/lib/client";
@@ -72,12 +71,15 @@ export default function TeachPanel({
         {turns.map((t, i) => (
           <div key={i} className="space-y-3">
             <div className="flex gap-3">
-              <span className="mt-0.5 shrink-0 rounded bg-stone-100 px-1.5 py-0.5 font-mono text-[10.5px] tracking-wide text-stone-500 uppercase">
+              <span className="mt-0.5 shrink-0 self-start rounded bg-stone-100 px-1.5 py-0.5 font-mono text-[10.5px] tracking-wide text-stone-500 uppercase">
                 junior
               </span>
-              <p className="text-[15px] leading-[1.7] text-stone-800">
-                <InlineMarkdown>{t.junior}</InlineMarkdown>
-              </p>
+              {/* A junior "typing in Slack" pastes snippets, and a fenced block
+                  run through the inline renderer collapses to one line of
+                  backticks. `min-w-0` keeps a wide one inside the flex row. */}
+              <div className="min-w-0 flex-1">
+                <Markdown tone="text-stone-800">{t.junior}</Markdown>
+              </div>
             </div>
             {t.user && (
               <p className="border-l-2 border-stone-200 pl-3 text-[15px] leading-[1.7] whitespace-pre-wrap text-stone-600">
@@ -89,12 +91,12 @@ export default function TeachPanel({
 
         {streaming && (
           <div className="flex gap-3">
-            <span className="mt-0.5 shrink-0 rounded bg-stone-100 px-1.5 py-0.5 font-mono text-[10.5px] tracking-wide text-stone-500 uppercase">
+            <span className="mt-0.5 shrink-0 self-start rounded bg-stone-100 px-1.5 py-0.5 font-mono text-[10.5px] tracking-wide text-stone-500 uppercase">
               junior
             </span>
-            <p className="caret-blink text-[15px] leading-[1.7] text-stone-800">
-              <InlineMarkdown>{streaming}</InlineMarkdown>
-            </p>
+            <div className="caret-blink min-w-0 flex-1">
+              <Markdown tone="text-stone-800">{streaming}</Markdown>
+            </div>
           </div>
         )}
 

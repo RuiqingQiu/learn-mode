@@ -45,6 +45,9 @@ export default function Chat({ ephemeral = false }: { ephemeral?: boolean }) {
   } | null>(null);
   const [challengeDismissed, setChallengeDismissed] = useState(false);
 
+  /** The session currently floated to the end of the thread — see `floated`. */
+  const [floatedKey, setFloatedKey] = useState<string | null>(null);
+
   const bottom = useRef<HTMLDivElement>(null);
 
   /** Always target by the stable `key`, never by the server id. */
@@ -56,6 +59,7 @@ export default function Chat({ ephemeral = false }: { ephemeral?: boolean }) {
 
   const openThread = useCallback(async (id: string) => {
     setThreadId(id);
+    setFloatedKey(null);
     // §4.0 — the toggle resets on every session boundary. Never persisted.
     setMode("answer");
     setFlipNote(false);
@@ -115,6 +119,9 @@ export default function Chat({ ephemeral = false }: { ephemeral?: boolean }) {
   const send = async (question: string, sendMode: Mode, contextExchangeId?: string) => {
     if (!threadId) return;
     const key = crypto.randomUUID();
+    // Asking something new means moving on: a finished session stops floating and
+    // settles back beside its own exchange. A live one re-floats immediately.
+    setFloatedKey(null);
     setExchanges((prev) => [...prev, blankExchange(key, question, sendMode)]);
     setBusy(true);
 
@@ -440,6 +447,11 @@ export default function Chat({ ephemeral = false }: { ephemeral?: boolean }) {
           patch(key, (e) => ({ ...e, teach: { ...e.teach, streaming: e.teach.streaming + (ev.delta as string) } }));
         } else if (ev.type === "done") {
           const ended = ev.ended as boolean;
+          // The server writes this turn *at* `idx`, replacing whatever was there:
+          // re-entering an unanswered question regenerates that same row. Appending
+          // blindly grows a second junior question the server does not have, and
+          // the panel then shows two openers with no reply between them.
+          const idx = ev.idx as number;
           patch(key, (e) => {
             // The user can pause while this turn is still streaming. Keep the
             // question — it is what they come back to — but do not un-pause them.
@@ -448,7 +460,9 @@ export default function Chat({ ephemeral = false }: { ephemeral?: boolean }) {
               ...e,
               status: ended || paused ? "done" : "teaching",
               teach: {
-                turns: ended ? e.teach.turns : [...e.teach.turns, { junior: e.teach.streaming, user: null }],
+                turns: ended
+                  ? e.teach.turns
+                  : [...e.teach.turns.slice(0, idx), { junior: e.teach.streaming, user: null }],
                 streaming: "",
                 pending: false,
                 closed: ended,
@@ -475,7 +489,19 @@ export default function Chat({ ephemeral = false }: { ephemeral?: boolean }) {
     }
   };
 
+  /**
+   * Exchanges whose explain-back session has already been launched. `Explain it
+   * back` unlocks the moment `full` *starts* (§4.3), so the user can be two turns
+   * into the session by the time the reveal finishes and auto-launches the
+   * reinforcement phase. Without this the auto-launch starts a second opening
+   * turn: the server regenerates its one row while the panel grows a second
+   * junior question, and the reply box vanishes mid-sentence while it streams.
+   */
+  const teachStarted = useRef<Set<string>>(new Set());
+
   const explainBack = async (key: string, id: string) => {
+    if (teachStarted.current.has(key)) return;
+    teachStarted.current.add(key);
     // Claim the state first — otherwise the button is still live during the
     // round trip and a second click re-enters the same turn.
     patch(key, (e) => ({ ...e, status: "teaching", teach: { ...e.teach, pending: true } }));
@@ -524,6 +550,9 @@ export default function Chat({ ephemeral = false }: { ephemeral?: boolean }) {
     document.getElementById(`ex-${targetId}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
 
   const clearTeaching = async (key: string, id: string) => {
+    // Clearing is a reset, not a punishment — starting over has to be allowed.
+    teachStarted.current.delete(key);
+    setFloatedKey((k) => (k === key ? null : k));
     await api.clearTeaching(id);
     patch(key, (e) => ({
       ...e,
@@ -544,7 +573,26 @@ export default function Chat({ ephemeral = false }: { ephemeral?: boolean }) {
 
   // A session that is still open but no longer the last exchange floats to the end.
   const live = exchanges.find((e) => e.teach.turns.length > 0 && !e.teach.closed);
-  const floated = live && exchanges[exchanges.length - 1]?.key !== live.key ? live : null;
+  /**
+   * ...and it keeps that place once the exit summary closes it. `live` stops
+   * matching a closed session, and letting the panel snap back to its own
+   * exchange sends the wrap-up hundreds of pixels above the viewport, while the
+   * page scrolls to the bottom of the main-chat answer instead. From the
+   * composer that is indistinguishable from the reply having produced nothing —
+   * which is exactly how it was reported.
+   */
+  const sticky =
+    floatedKey && floatedKey !== live?.key
+      ? exchanges.find((e) => e.key === floatedKey && e.teach.turns.length > 0)
+      : undefined;
+  const candidate = live ?? sticky;
+  const floated =
+    candidate && exchanges[exchanges.length - 1]?.key !== candidate.key ? candidate : null;
+
+  const floatedNow = floated?.key ?? null;
+  useEffect(() => {
+    if (floatedNow) setFloatedKey(floatedNow);
+  }, [floatedNow]);
 
   if (!fatal && prefsLoaded && (!prefs || editingPrefs)) {
     return (

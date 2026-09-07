@@ -5,9 +5,18 @@ import remarkGfm from "remark-gfm";
 import CodeBlock from "./CodeBlock";
 
 /** Markdown for `full` and for plain answers. Deliberately small. */
-export default function Markdown({ children }: { children: string }) {
+export default function Markdown({
+  children,
+  tone = "text-stone-700",
+}: {
+  children: string;
+  /** Text colour for the block. A whole class, not a suffix — two competing
+      `text-*` classes on one element resolve by stylesheet order, not by the
+      order they are written in. */
+  tone?: string;
+}) {
   return (
-    <div className="text-[15px] leading-[1.7] text-stone-700">
+    <div className={`text-[15px] leading-[1.7] ${tone}`}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{

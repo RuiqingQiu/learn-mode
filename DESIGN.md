@@ -11,29 +11,44 @@ the course tutor — and `claude-haiku-4-5` runs triage and concept tagging.
 
 ---
 
-## The problem, and which option
+## Motivation
 
-The brief names two problems. **Discovery and mastery** — people use a fraction of
-what Claude can do. And **cognitive engagement** — when Claude handles the complex
-part, you become a spectator rather than a learner.
+I chose **Option B**, cognitive engagement.
 
-I chose **Option B**, because the first problem gets *better* as interfaces get
-better and the second gets **worse** as models get better. Every increase in
-capability increases the temptation to hand over the thinking, and no amount of
-interface polish touches that.
-
-The mechanism I designed against:
-
-> Reading a fluent explanation produces the *feeling* of understanding without the
-> encoding.
-
-That is the illusion of explanatory depth, measured for decades. What is new is
-that model output is maximally fluent, so it maximises the illusion — and the
+Learning has never been easier to *start*. Any question, at any depth, in any
+framing, answered in seconds — information seeking with AI is close to solved.
+What has not got easier is everything after that: retaining what you read, being
+able to use it a week later, noticing when you did not actually understand it.
+Reading a fluent explanation produces the *feeling* of understanding, and that
+feeling is the problem. It is the illusion of explanatory depth, measured for
+decades; model output is maximally fluent, so it maximises the illusion, and the
 failure is invisible from the inside, which is why it does not self-correct.
 
-So the prototype rests on one intervention: **you commit to something before
-Claude will answer.** That converts reading into retrieval, and leaves a reference
-point — your own stated belief — for the answer to be aimed at.
+That is also why I think this is the harder of the brief's two problems.
+Discovery gets *better* as interfaces improve. Engagement gets *worse* as models
+improve: every increase in capability increases the temptation to hand over the
+thinking, and no amount of interface polish touches that.
+
+There are already features aimed at this. Claude's Learning style and ChatGPT's
+study mode hold back the answer and ask guiding questions; flashcard and
+spaced-repetition tools sit at the other end and drill what you already read.
+They share an assumption worth questioning: that one feedback method suits
+everyone, and that method is almost always *a quiz afterwards*. Quizzing is the
+common case because it is easy to build and easy to score. Methods with as much
+or more evidence behind them — committing a guess before you read, explaining
+the idea to someone else, applying it cold in a different domain — are rare in
+products, partly because they are harder to build and partly because they are
+harder to make feel good.
+
+So this project is an illustration: what does an assistant look like when *how
+you are made to engage* is a first-class design choice, with several methods
+side by side rather than one baked in? One mechanic holds it together — **you
+commit to something before Claude answers** — which converts reading into
+retrieval and leaves a reference point, your own stated belief, for the answer
+to be aimed at. Around that, the prototype puts the less common methods next to
+the common one: a quiz after, but also teaching it back to a confused junior,
+and being re-tested on an old miss in an unfamiliar domain, so the difference
+between them can be felt rather than argued.
 
 ## What I built
 
