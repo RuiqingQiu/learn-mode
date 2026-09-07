@@ -134,6 +134,11 @@ check((await showFull.innerText()).includes("still writing"),
       "'Show full answer' flags that it is still being written");
 check((await explainBack.count()) > 0,
       "'Explain it back' unlocks before the full answer finishes");
+// Take that path, because it races the reinforcement phase the reveal launches
+// when it finishes. Both used to fire, and the second regenerated the server's
+// one row while the panel grew a second opening question with no reply between.
+// Exact name: the sidebar's example note also reads "Explain it back".
+await page.getByRole("button", { name: "Explain it back", exact: true }).click();
 
 await page.waitForFunction(
   () => !(document.querySelector("main")?.innerText ?? "").includes("still writing"),
@@ -160,12 +165,20 @@ check((await page.getByRole("button", { name: "answer", exact: true }).getAttrib
 check((await page.getByText("Switched back to Answer").count()) > 0, "the auto-flip announced itself");
 
 // ── Protégé mode ──────────────────────────────────────────────────────────
-log("protege (auto-launched by the 'explain it back' preference)");
+log("protege (started mid-reveal, above)");
 await page.waitForFunction(
   () => (document.querySelector("main")?.innerText ?? "").includes("JUNIOR"),
   null, { timeout: 120000 },
 ).then(() => check(true, "junior asked the first question"))
  .catch(() => check(false, "junior asked the first question"));
+
+/** Junior questions on screen. Must never exceed the turns the server stored. */
+const juniorTurns = () => page.locator("main span", { hasText: /^junior$/i }).count();
+// The reveal finished a moment ago, so its auto-launch has had its chance: a
+// second session would either be mid-generation (spinner) or already on screen.
+await page.waitForTimeout(8000);
+check((await juniorTurns()) === 1 && !(await panel.innerText()).includes("junior is thinking"),
+      "one opening question — the auto-launch did not start a second session");
 
 const pauseBtn = page.getByRole("button", { name: /Pause — ask something else/ });
 const resumeBtn = page.getByRole("button", { name: /Resume explaining/ });
@@ -227,11 +240,24 @@ check(!!answerBox && !!panelBox && panelBox.y > answerBox.y,
       "the main-chat answer sits above the session, in the order it happened");
 check((await page.getByText("Explaining back:").count()) > 0, "floated panel names its question");
 
-// Replying must not bounce the page away from the box being typed in.
+// Replying must not bounce the page away from the box being typed in — and it
+// has to actually produce the next turn. A client/server disagreement about how
+// many turns exist ends the session early, and the wrap-up then renders next to
+// the original exchange, far above the composer: indistinguishable from nothing.
+const turnsBefore = await juniorTurns();
 await panel.locator("textarea").fill("they all run when the function returns");
 await panel.getByRole("button", { name: "Reply", exact: true }).click();
 await page.waitForTimeout(2500);
 check(await inViewport(panel), "the panel stays in view while the junior replies");
+await page
+  .waitForFunction(
+    (n) => document.querySelectorAll("main span").length >= 0 &&
+      [...document.querySelectorAll("main span")].filter((e) => e.textContent.trim().toLowerCase() === "junior").length > n,
+    turnsBefore, { timeout: 120000 },
+  )
+  .then(() => check(true, "the reply produced the junior's next turn"))
+  .catch(() => check(false, "the reply produced the junior's next turn"));
+check(await inViewport(panel), "the answer to that reply landed where the user is looking");
 
 // ── Clear ─────────────────────────────────────────────────────────────────
 await pauseBtn.click();

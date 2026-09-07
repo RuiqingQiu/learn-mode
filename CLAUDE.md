@@ -68,6 +68,12 @@ them incrementally so the client can render mid-stream:
   work from. `revealStreaming` is a separate flag from `status` for exactly this
   reason — one field cannot say "reveal is streaming" and "we are teaching" at
   once.
+
+  Taking that early path races the reinforcement phase the reveal launches when
+  it *finishes*, and both used to fire. `teachStarted` in `Chat` claims the
+  exchange so the auto-launch cannot start a second session on top of the one
+  you are already answering. `clearTeaching` releases the claim, because clearing
+  is a reset.
 - All four visible layers come from **one** call. Do not split them across
   requests — the layers will contradict each other on edge cases (§5).
 - The parser tolerates tags split across chunk boundaries and passes bare `<`
@@ -407,14 +413,30 @@ change.
   `context_exchange_id` so the UI can say so. Protégé mode auto-resumes when the
   answer lands, and `Clear` discards the session entirely.
 
-  **A live session floats to the end of the thread.** Left in place next to its
-  own exchange it strands itself above everything you ask mid-session, which reads
-  as having vanished. So while a session is open and is not already the last
-  exchange, `Chat` renders its panel after the list (`floated`) and passes
+  **A live session floats to the end of the thread, and stays there once it
+  closes.** Left in place next to its own exchange it strands itself above
+  everything you ask mid-session, which reads as having vanished. So while a
+  session is open and is not already the last exchange, `Chat` renders its panel
+  after the list (`floated`) and passes
   `renderTeach={false}` to the owning `ExchangeView`. Anything you ask lands above
   it — the order it happened in — and everything you can act on is at the bottom
   next to the composer. The panel keeps a link back to its own question; each
   exchange renders with `id="ex-<serverId>"` for that.
+
+  The float is sticky (`floatedKey`) for the same reason the panel floats at all:
+  the exit summary flips `closed`, a closed session stops being *live*, and
+  letting the panel snap back to its own exchange puts the wrap-up hundreds of
+  pixels above the viewport while auto-scroll goes to the bottom of the main-chat
+  answer. That is indistinguishable from the reply having produced nothing, and
+  it is how it was reported. Asking something new clears it and the finished
+  panel settles back beside its own exchange.
+
+  **The client places a junior turn at the server's `idx`, it does not append.**
+  `replaceTeachTurn` overwrites: re-entering an unanswered question regenerates
+  that same row. Appending grows a junior question the server does not have, and
+  the transcript then reads as two openers with no reply between them — and
+  because the client is a turn ahead, the session hits `TEACH_TURN_CAP` and wraps
+  up while the user still expects a question.
 
   **Auto-scroll follows the streaming exchange, not the absolute bottom.** Chasing
   the bottom yanks the user off a live answer, and once the panel is no longer
